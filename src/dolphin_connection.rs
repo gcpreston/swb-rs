@@ -4,6 +4,7 @@ use std::{
 };
 
 use rusty_enet as enet;
+use base64::{prelude::BASE64_STANDARD, Engine};
 
 use serde::de::Error;
 use serde_json::{Result as SerdeResult, Value};
@@ -11,7 +12,9 @@ use serde_json::{Result as SerdeResult, Value};
 pub enum ConnectionEvent {
     Connect,
     Disconnect,
-    Message,
+    Message {
+        payload: Vec<u8>
+    },
     StartGame,
     EndGame
 }
@@ -45,6 +48,9 @@ impl DolphinConnection {
     peer.set_ping_interval(100);
   }
 
+  // TODO: Could coerce message payloads into a futures_util stream so that it
+  //   can just be mapped and forwarded automatically
+  // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
   pub fn service(&mut self) -> Result<Option<ConnectionEvent>, &'static str> {
     match self.host.service() {
         Err(_) => Err("host service error"),
@@ -78,7 +84,14 @@ impl DolphinConnection {
 
                         match packet_type.as_str() {
                             "connect_reply" => Ok(Some(ConnectionEvent::Connect)),
-                            "game_event" => Ok(Some(ConnectionEvent::Message)),
+                            "game_event" => {
+                                if let Value::String(encoded_payload) = &v["payload"] {
+                                    let payload = BASE64_STANDARD.decode(encoded_payload).unwrap();
+                                    Ok(Some(ConnectionEvent::Message { payload }))
+                                } else {
+                                    Err("payload access error")
+                                }
+                            },
                             "start_game" => Ok(Some(ConnectionEvent::StartGame)),
                             "end_game" => Ok(Some(ConnectionEvent::EndGame)),
                             _ => Err("unexpected packet type")
