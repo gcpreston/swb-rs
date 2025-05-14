@@ -32,7 +32,7 @@ async fn main() {
 
     let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
-    let (mut sink, _stream) = ws_stream.split();
+    let (mut sink, stream) = ws_stream.split();
 
     'outer: loop {
         while let Some(event) = conn.service().unwrap() {
