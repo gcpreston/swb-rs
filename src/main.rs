@@ -1,6 +1,6 @@
 use std::{
     net::SocketAddr,
-    str::{self, FromStr},
+    str::FromStr,
     time::Duration,
 };
 use futures_util::{SinkExt, stream::StreamExt};
@@ -8,19 +8,29 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{Bytes, Message}
 };
+use clap::Parser;
 
 mod dolphin_connection;
 
-const SLIPPI_ADDRESS: &str = "127.0.0.1";
-const SLIPPI_PORT: i32 = 51441;
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, default_value = "ws://localhost:4000/bridge_socket/websocket")]
+    dest: String,
+
+    #[arg(short, long, default_value = "127.0.0.1:51441")]
+    source: String,
+}
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+
     let mut conn = dolphin_connection::DolphinConnection::new();
-        let address = SocketAddr::from_str(format!("{SLIPPI_ADDRESS}:{SLIPPI_PORT}").as_str()).unwrap();
+    let address = SocketAddr::from_str(&args.source).unwrap();
     conn.connect(address);
 
-    let (ws_stream, _) = connect_async("ws://localhost:4000/bridge_socket/websocket").await.expect("Failed to connect");
+    let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
     let (mut sink, _stream) = ws_stream.split();
 
