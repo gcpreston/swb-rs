@@ -52,8 +52,8 @@ impl DolphinConnection {
         peer.set_ping_interval(100);
     }
 
-    // Poll Dolphin connection at 120Hz
     pub fn event_stream(&mut self) -> impl Stream<Item = ConnectionEvent> {
+        // Poll Dolphin connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
 
         stream::poll_fn(move |cx: &mut Context<'_>| {
@@ -65,7 +65,8 @@ impl DolphinConnection {
                     Result::Ok(None) => {
                         cx.waker().clone().wake();
                         Poll::Pending
-                    }
+                    },
+                    Result::Ok(Some(ConnectionEvent::Disconnect)) => Poll::Ready(None),
                     Result::Ok(Some(event)) => Poll::Ready(Some(event)),
                 },
             }

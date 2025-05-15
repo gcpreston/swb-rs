@@ -2,7 +2,6 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
-use futures::future;
 use futures_util::stream::StreamExt;
 use tokio_tungstenite::{
     connect_async,
@@ -40,12 +39,24 @@ async fn main() {
     let dolphin_event_stream = conn.event_stream();
 
     let dolphin_to_sm = dolphin_event_stream
-        .filter_map(|e| match e {
-            ConnectionEvent::Message { payload } => future::ready(Some(payload)),
-            _ => future::ready(None),
+        .map(|e| {
+            // ConnectionEvent::Disconnected will not reach the stream because
+            // it is sent as Poll::Ready(None), i.e. the stream end.
+            match e {
+                ConnectionEvent::Connect => println!("Connected to Slippi."),
+                ConnectionEvent::StartGame => println!("Game start"),
+                ConnectionEvent::EndGame => println!("Game end"),
+                _ => ()
+            };
+            e
+        })
+        .filter_map(async |e| match e {
+            ConnectionEvent::Message { payload } => Some(payload),
+            _ => None,
         })
         .map(|payload| Ok(Message::Binary(Bytes::from(payload))))
         .forward(sink);
 
     dolphin_to_sm.await.unwrap();
+    println!("Disconnected from Slippi.")
 }
