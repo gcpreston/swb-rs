@@ -1,8 +1,8 @@
 use std::{
-    net::SocketAddr,
-    str::FromStr,
-    time::Duration,
+    net::SocketAddr, str::FromStr, task::Context, time::Duration
 };
+
+use futures::future::{poll_fn, poll_immediate};
 use futures_util::{SinkExt, stream::StreamExt};
 use tokio_tungstenite::{
     connect_async,
@@ -49,37 +49,13 @@ async fn main() {
     let address = SocketAddr::from_str(&args.source).unwrap();
     conn.connect(address);
 
-    let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
-    println!("WebSocket handshake has been successfully completed");
-    let (mut sink, mut stream) = ws_stream.split();
+    // let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
+    // println!("WebSocket handshake has been successfully completed");
+    // let (mut sink, mut stream) = ws_stream.split();
 
-    'outer: loop {
-        while let Some(event) = conn.service().unwrap() {
-            match event {
-                dolphin_connection::ConnectionEvent::Connect => {
-                    println!("Connected");
-                    if let Some(reply) = stream.next().await {
-                        let (bridge_id, reconnect_token) = parse_connect_reply(reply.unwrap()).unwrap();
-                        println!("Got bridge id {:?} and reconnect token {:?}", bridge_id, reconnect_token);
-                    }
-                }
-                dolphin_connection::ConnectionEvent::Disconnect => {
-                    println!("Disconnected");
-                    sink.close().await.unwrap();
-                    break 'outer;
-                }
-                dolphin_connection::ConnectionEvent::Message { payload } => {
-                    let message = Message::Binary(Bytes::from(payload));
-                    sink.send(message).await.unwrap();
-                }
-                dolphin_connection::ConnectionEvent::StartGame => {
-                    println!("Game started");
-                }
-                dolphin_connection::ConnectionEvent::EndGame => {
-                    println!("Game ended");
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let dolphin_event_future = poll_fn(move |cx: &mut Context<'_>| {
+        conn.next_event(cx)
+    });
+
+    println!("Got from dolphin: {:?}", dolphin_event_future.await.unwrap());
 }
