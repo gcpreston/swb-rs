@@ -2,8 +2,10 @@ use std::{
     net::SocketAddr, str::FromStr, task::Context, time::Duration
 };
 
-use futures::future::{poll_fn, poll_immediate};
+use futures::{future, stream};
+use futures::task::Poll;
 use futures_util::{SinkExt, stream::StreamExt};
+use tokio::time::interval;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Bytes, Message}
@@ -53,9 +55,31 @@ async fn main() {
     // println!("WebSocket handshake has been successfully completed");
     // let (mut sink, mut stream) = ws_stream.split();
 
-    let dolphin_event_future = poll_fn(move |cx: &mut Context<'_>| {
-        conn.next_event(cx)
+    // Poll Dolphin connection at 120Hz
+    let mut i = interval(Duration::from_micros(8333));
+
+    let mut dolphin_event_stream = stream::poll_fn(move |cx: &mut Context<'_>| {
+        let p = i.poll_tick(cx);
+        match p {
+            Poll::Pending => {
+                Poll::Pending
+            },
+            Poll::Ready(_) => {
+                match conn.service() {
+                    Result::Err(e) => panic!("dolphin service error: {e}"),
+                    Result::Ok(None) => {
+                        cx.waker().clone().wake();
+                        Poll::Pending
+                    },
+                    Result::Ok(Some(event)) => {
+                        Poll::Ready(Some(event))
+                    }
+                }
+            }
+        }
     });
 
-    println!("Got from dolphin: {:?}", dolphin_event_future.await.unwrap());
+    loop {
+        println!("Got from dolphin: {:?}", dolphin_event_stream.next().await.unwrap());
+    }
 }
