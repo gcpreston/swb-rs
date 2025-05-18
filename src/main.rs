@@ -32,9 +32,10 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let mut conn = dolphin_connection::DolphinConnection::new();
+    let conn = dolphin_connection::DolphinConnection::new();
     let address = SocketAddr::from_str(&args.source).unwrap();
     conn.initiate_connection(address);
+    conn.wait_for_connected().await;
 
     let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");

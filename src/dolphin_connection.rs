@@ -1,12 +1,11 @@
 use std::{
-    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str::{self, FromStr}, time::Duration
+    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
-    stream::{self, Stream}, task::{Context, Poll}
+    future, stream::{self, Stream}, task::{Context, Poll}
 };
-use futures_util::StreamExt;
 use rusty_enet as enet;
 use serde::de::Error;
 use serde_json::{Result as SerdeResult, Value};
@@ -22,7 +21,7 @@ pub enum ConnectionEvent {
 }
 
 pub struct DolphinConnection {
-    host: enet::Host<UdpSocket>,
+    c: RefCell<enet::Host<UdpSocket>>,
 }
 
 const MAX_PEERS: usize = 32;
@@ -42,26 +41,42 @@ impl DolphinConnection {
         )
         .unwrap();
 
-        Self { host }
+        let c = RefCell::new(host);
+        Self { c }
     }
 
-    pub fn initiate_connection(&mut self, addr: SocketAddr) {
-        let peer = self.host.connect(addr, 3, 1337).unwrap();
+    pub fn initiate_connection(&self, addr: SocketAddr) {
+        let mut host = self.c.borrow_mut();
+        let peer = host.connect(addr, 3, 1337).unwrap();
         peer.set_ping_interval(100);
     }
 
-    pub fn catch_up_stream(&mut self) -> impl Stream<Item = ConnectionEvent> {
-        stream::poll_fn(|cs: &mut Context<'_>| {
+    pub async fn wait_for_connected(&self) {
+        future::poll_fn(|cx: &mut Context<'_>| {
+            match self.service() {
+                Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
+                _ => {
+                    cx.waker().clone().wake();
+                    Poll::Pending
+                }
+            }
+        }).await;
+    }
+
+    pub fn catch_up_stream(&self) -> impl Stream<Item = ConnectionEvent> {
+        stream::poll_fn(|cx: &mut Context<'_>| {
             if let Some(event) = self.service().unwrap() {
-                cs.waker().clone().wake();
+                println!("catch up got something");
+                cx.waker().clone().wake();
                 Poll::Ready(Some(event))
             } else {
+                println!("catch up got nothing!!!");
                 Poll::Ready(None)
             }
         })
     }
 
-    pub fn event_stream(&mut self) -> impl Stream<Item = ConnectionEvent> {
+    pub fn event_stream(&self) -> impl Stream<Item = ConnectionEvent> {
         // Poll Dolphin connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
 
@@ -84,8 +99,10 @@ impl DolphinConnection {
     }
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
-    pub fn service(&mut self) -> Result<Option<ConnectionEvent>, &'static str> {
-        match self.host.service() {
+    pub fn service(&self) -> Result<Option<ConnectionEvent>, &'static str> {
+        let mut host = self.c.borrow_mut();
+
+        match host.service() {
             Err(_) => Err("host service error"),
 
             Ok(None) => Ok(None),
