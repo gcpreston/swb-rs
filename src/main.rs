@@ -24,6 +24,10 @@ struct Args {
     source: String,
 }
 
+// Goal right now
+// - Whenever there is something to send, send in a loop until exhausted
+// - Once exhausted, fall back to interval
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -36,7 +40,7 @@ async fn main() {
     println!("WebSocket handshake has been successfully completed");
     let (sink, mut _stream) = ws_stream.split();
 
-    let dolphin_event_stream = conn.event_stream();
+    let dolphin_event_stream = conn.catch_up_stream().chain(conn.event_stream());
 
     let dolphin_to_sm = dolphin_event_stream
         .map(|e| {

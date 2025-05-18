@@ -1,18 +1,16 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
-    str,
-    time::Duration,
+    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str::{self, FromStr}, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
-    stream::{self, Stream},
-    task::{Context, Poll},
+    stream::{self, Stream}, task::{Context, Poll}
 };
+use futures_util::StreamExt;
 use rusty_enet as enet;
 use serde::de::Error;
 use serde_json::{Result as SerdeResult, Value};
-use tokio::time::interval;
+use tokio::{time::interval};
 
 #[derive(Debug)]
 pub enum ConnectionEvent {
@@ -52,6 +50,17 @@ impl DolphinConnection {
         peer.set_ping_interval(100);
     }
 
+    pub fn catch_up_stream(&mut self) -> impl Stream<Item = ConnectionEvent> {
+        stream::poll_fn(|cs: &mut Context<'_>| {
+            if let Some(event) = self.service().unwrap() {
+                cs.waker().clone().wake();
+                Poll::Ready(Some(event))
+            } else {
+                Poll::Ready(None)
+            }
+        })
+    }
+
     pub fn event_stream(&mut self) -> impl Stream<Item = ConnectionEvent> {
         // Poll Dolphin connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
@@ -67,6 +76,7 @@ impl DolphinConnection {
                         Poll::Pending
                     },
                     Result::Ok(Some(ConnectionEvent::Disconnect)) => Poll::Ready(None),
+                    // Naive approach
                     Result::Ok(Some(event)) => Poll::Ready(Some(event)),
                 },
             }
