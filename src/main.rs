@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, os::unix::process, str::FromStr};
+use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
@@ -64,7 +64,6 @@ async fn main() {
                 EventOrSignal::Signal(n) => {
                     if !interrupted {
                         println!("Got a primary signal: {:?}", n);
-                        // handle.close();
                         conn.initiate_disconnect(pid);
                         interrupted = true;
                     } else {

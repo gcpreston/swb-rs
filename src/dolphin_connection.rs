@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, thread, time::Duration
+    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
