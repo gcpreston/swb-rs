@@ -63,6 +63,7 @@ impl DolphinConnection {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(_) => {
                     println!("checking service");
+
                     match self.service() {
                         Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
                         _ => {
@@ -95,30 +96,36 @@ impl DolphinConnection {
     pub fn event_stream(&self) -> impl Stream<Item = ConnectionEvent> {
         // Poll Dolphin connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
+        let mut dcd = false;
 
         stream::poll_fn(move |cx: &mut Context<'_>| {
-            let p = i.poll_tick(cx);
-            match p {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => match self.service() {
-                    Result::Err(_e) => Poll::Ready(None),
-                    Result::Ok(None) => {
-                        cx.waker().clone().wake();
-                        Poll::Pending
+            if dcd {
+                Poll::Ready(None)
+            } else {
+                let p = i.poll_tick(cx);
+                match p {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(_) => match self.service() {
+                        Result::Err(_e) => Poll::Ready(None),
+                        Result::Ok(None) => {
+                            cx.waker().clone().wake();
+                            Poll::Pending
+                        },
+                        Result::Ok(Some(ConnectionEvent::Disconnect)) => {
+                            println!("disconnect from inside dolphin connection");
+                            dcd = true;
+                            Poll::Ready(Some(ConnectionEvent::Disconnect))
+                        },
+                        // Naive approach
+                        Result::Ok(Some(event)) => Poll::Ready(Some(event)),
                     },
-                    Result::Ok(Some(ConnectionEvent::Disconnect)) => {
-                        println!("Got disconnect event!");
-                        Poll::Ready(None)
-                    },
-                    // Naive approach
-                    Result::Ok(Some(event)) => Poll::Ready(Some(event)),
-                },
+                }
             }
         })
     }
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
-    pub fn service(&self) -> Result<Option<ConnectionEvent>, &'static str> {
+    fn service(&self) -> Result<Option<ConnectionEvent>, &'static str> {
         let mut host = self.c.borrow_mut();
 
         match host.service() {

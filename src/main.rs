@@ -5,7 +5,7 @@ use dolphin_connection::ConnectionEvent;
 use futures::{stream_select, StreamExt};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Bytes, Message},
+    tungstenite::Message,
 };
 use signal_hook;
 use signal_hook_tokio::Signals;
@@ -74,15 +74,23 @@ async fn main() {
                 EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
+                EventOrSignal::Event(ConnectionEvent::Disconnect) => {
+                    println!("disconnect event in main");
+                    handle.close();
+                },
                 _ => ()
             };
             e
         })
         .filter_map(async |e| match e {
-            EventOrSignal::Event(ConnectionEvent::Message { payload }) => Some(payload),
+            EventOrSignal::Event(ConnectionEvent::Message { payload }) => {
+                Some(Ok(Message::Binary(payload.into())))
+            },
+            EventOrSignal::Event(ConnectionEvent::Disconnect) => {
+                Some(Ok(Message::Text("quit".into())))
+            },
             _ => None,
         })
-        .map(|payload| Ok(Message::Binary(Bytes::from(payload))))
         .forward(sink);
 
     dolphin_to_sm.await.unwrap();
