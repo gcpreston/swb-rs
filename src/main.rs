@@ -31,6 +31,7 @@ enum EventOrSignal {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    println!("[CTRL + C to quit]\n");
 
     let conn = dolphin_connection::DolphinConnection::new();
     let address = SocketAddr::from_str(&args.source).unwrap();
@@ -67,14 +68,14 @@ async fn main() {
                     } else {
                         std::process::exit(n);
                     }
-                }
+                },
                 EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
                 EventOrSignal::Event(ConnectionEvent::Disconnect) => {
                     println!("Disconnected.");
                     handle.close();
-                }
+                },
                 _ => (),
             };
             e
