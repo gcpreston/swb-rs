@@ -41,7 +41,7 @@ async fn main() {
     conn.wait_for_connected().await;
     println!("Connected to Slippi.");
 
-    let (bridge_info, sink) = spectator_mode_client::connect(args.dest).await;
+    let (bridge_info, sink) = spectator_mode_client::connect(args.dest).await.expect("Error connecting to Spectator Mode");
     println!("Connected to SpectatorMode with stream ID: {}", bridge_info.bridge_id);
 
     let signals = Signals::new(&[signal_hook::consts::SIGINT]).unwrap();

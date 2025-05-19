@@ -17,3 +17,4 @@ futures = "0.3.31"
 crossbeam-channel = "0.5.15"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 signal-hook = "0.3.18"
+thiserror = "2.0.12"

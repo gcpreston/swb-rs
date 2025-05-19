@@ -915,6 +915,7 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "signal-hook-tokio",
+ "thiserror",
  "tokio",
  "tokio-tungstenite",
 ]
