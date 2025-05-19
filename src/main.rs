@@ -2,13 +2,10 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
-use futures::{stream_select, StreamExt};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::Message,
-};
+use futures::{StreamExt, stream_select};
 use signal_hook;
 use signal_hook_tokio::Signals;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dolphin_connection;
 
@@ -28,7 +25,7 @@ struct Args {
 
 enum EventOrSignal {
     Event(ConnectionEvent),
-    Signal(i32)
+    Signal(i32),
 }
 
 #[tokio::main]
@@ -70,25 +67,25 @@ async fn main() {
                         println!("Got a signal again: {:?}", n);
                         std::process::exit(n);
                     }
-                },
+                }
                 EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
                 EventOrSignal::Event(ConnectionEvent::Disconnect) => {
                     println!("disconnect event in main");
                     handle.close();
-                },
-                _ => ()
+                }
+                _ => (),
             };
             e
         })
         .filter_map(async |e| match e {
             EventOrSignal::Event(ConnectionEvent::Message { payload }) => {
                 Some(Ok(Message::Binary(payload.into())))
-            },
+            }
             EventOrSignal::Event(ConnectionEvent::Disconnect) => {
                 Some(Ok(Message::Text("quit".into())))
-            },
+            }
             _ => None,
         })
         .forward(sink);

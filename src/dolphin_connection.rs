@@ -1,15 +1,20 @@
 use std::{
-    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, time::Duration
+    cell::RefCell,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
+    str,
+    time::Duration,
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
-    future, stream::{self, Stream}, task::{Context, Poll}
+    future,
+    stream::{self, Stream},
+    task::{Context, Poll},
 };
 use rusty_enet as enet;
 use serde::de::Error;
 use serde_json::{Result as SerdeResult, Value};
-use tokio::{time::interval};
+use tokio::time::interval;
 
 #[derive(Debug)]
 pub enum ConnectionEvent {
@@ -21,7 +26,7 @@ pub enum ConnectionEvent {
 }
 
 pub struct DolphinConnection {
-    c: RefCell<enet::Host<UdpSocket>>
+    c: RefCell<enet::Host<UdpSocket>>,
 }
 
 const MAX_PEERS: usize = 32;
@@ -73,7 +78,8 @@ impl DolphinConnection {
                     }
                 }
             }
-        }).await;
+        })
+        .await;
     }
 
     pub fn initiate_disconnect(&self, pid: enet::PeerID) {
@@ -110,12 +116,12 @@ impl DolphinConnection {
                         Result::Ok(None) => {
                             cx.waker().clone().wake();
                             Poll::Pending
-                        },
+                        }
                         Result::Ok(Some(ConnectionEvent::Disconnect)) => {
                             println!("disconnect from inside dolphin connection");
                             dcd = true;
                             Poll::Ready(Some(ConnectionEvent::Disconnect))
-                        },
+                        }
                         // Naive approach
                         Result::Ok(Some(event)) => Poll::Ready(Some(event)),
                     },
