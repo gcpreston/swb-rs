@@ -36,9 +36,10 @@ async fn main() {
     let address = SocketAddr::from_str(&args.source).unwrap();
     let pid = conn.initiate_connection(address);
     conn.wait_for_connected().await;
+    println!("Connected to Slippi.");
 
     let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
-    println!("WebSocket handshake has been successfully completed");
+    println!("Connected to SpectatorMode.");
     let (sink, mut _stream) = ws_stream.split();
 
     let dolphin_event_stream = conn.catch_up_stream().chain(conn.event_stream());
@@ -60,11 +61,10 @@ async fn main() {
             match e {
                 EventOrSignal::Signal(n) => {
                     if !interrupted {
-                        println!("Got a primary signal: {:?}", n);
+                        println!("Disconnecting...");
                         conn.initiate_disconnect(pid);
                         interrupted = true;
                     } else {
-                        println!("Got a signal again: {:?}", n);
                         std::process::exit(n);
                     }
                 }
@@ -72,7 +72,7 @@ async fn main() {
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
                 EventOrSignal::Event(ConnectionEvent::Disconnect) => {
-                    println!("disconnect event in main");
+                    println!("Disconnected.");
                     handle.close();
                 }
                 _ => (),
@@ -91,7 +91,4 @@ async fn main() {
         .forward(sink);
 
     dolphin_to_sm.await.unwrap();
-
-    handle.close();
-    println!("Disconnected from Slippi.");
 }

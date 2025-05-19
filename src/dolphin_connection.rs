@@ -62,13 +62,10 @@ impl DolphinConnection {
         let mut i = interval(Duration::from_micros(8333));
 
         future::poll_fn(|cx: &mut Context<'_>| {
-            println!("polling connected...");
             let p = i.poll_tick(cx);
             match p {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(_) => {
-                    println!("checking service");
-
                     match self.service() {
                         Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
                         _ => {
@@ -118,7 +115,6 @@ impl DolphinConnection {
                             Poll::Pending
                         }
                         Result::Ok(Some(ConnectionEvent::Disconnect)) => {
-                            println!("disconnect from inside dolphin connection");
                             dcd = true;
                             Poll::Ready(Some(ConnectionEvent::Disconnect))
                         }
