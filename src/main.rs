@@ -2,7 +2,7 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
-use futures::{StreamExt, stream_select};
+use futures::{pin_mut, stream_select, SinkExt, StreamExt};
 use signal_hook;
 use signal_hook_tokio::Signals;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -50,10 +50,10 @@ async fn main() {
 
     let mapped_signals = signals.map(|s| EventOrSignal::Signal(s));
     let mapped_events = dolphin_event_stream.map(|e| EventOrSignal::Event(e));
-
     let combined = stream_select!(mapped_signals, mapped_events);
 
     let mut interrupted = false;
+    pin_mut!(sink);
 
     let dolphin_to_sm = combined
         .map(|e| {
@@ -72,10 +72,7 @@ async fn main() {
                 EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
-                EventOrSignal::Event(ConnectionEvent::Disconnect) => {
-                    println!("Disconnected.");
-                    handle.close();
-                },
+                EventOrSignal::Event(ConnectionEvent::Disconnect) => handle.close(),
                 _ => (),
             };
             e
@@ -84,12 +81,11 @@ async fn main() {
             EventOrSignal::Event(ConnectionEvent::Message { payload }) => {
                 Some(Ok(Message::Binary(payload.into())))
             }
-            EventOrSignal::Event(ConnectionEvent::Disconnect) => {
-                Some(Ok(Message::Text("quit".into())))
-            }
             _ => None,
         })
-        .forward(sink);
+        .forward(&mut sink);
 
     dolphin_to_sm.await.unwrap();
+    sink.close().await.unwrap();
+    println!("Disconnected.");
 }
