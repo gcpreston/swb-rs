@@ -45,32 +45,48 @@ impl DolphinConnection {
         Self { c }
     }
 
-    pub fn initiate_connection(&self, addr: SocketAddr) {
+    pub fn initiate_connection(&self, addr: SocketAddr) -> enet::PeerID {
         let mut host = self.c.borrow_mut();
         let peer = host.connect(addr, 3, 1337).unwrap();
         peer.set_ping_interval(100);
+        peer.id()
     }
 
     pub async fn wait_for_connected(&self) {
+        // 120Hz
+        let mut i = interval(Duration::from_micros(8333));
+
         future::poll_fn(|cx: &mut Context<'_>| {
-            match self.service() {
-                Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
-                _ => {
-                    cx.waker().clone().wake();
-                    Poll::Pending
+            println!("polling connected...");
+            let p = i.poll_tick(cx);
+            match p {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(_) => {
+                    println!("checking service");
+                    match self.service() {
+                        Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
+                        _ => {
+                            cx.waker().clone().wake();
+                            Poll::Pending
+                        }
+                    }
                 }
             }
         }).await;
     }
 
+    pub fn initiate_disconnect(&self, pid: enet::PeerID) {
+        let mut host = self.c.borrow_mut();
+        let peer = host.peer_mut(pid);
+        peer.disconnect(1337);
+    }
+
     pub fn catch_up_stream(&self) -> impl Stream<Item = ConnectionEvent> {
         stream::poll_fn(|cx: &mut Context<'_>| {
             if let Some(event) = self.service().unwrap() {
-                println!("catch up got something");
                 cx.waker().clone().wake();
                 Poll::Ready(Some(event))
             } else {
-                println!("catch up got nothing!!!");
                 Poll::Ready(None)
             }
         })
