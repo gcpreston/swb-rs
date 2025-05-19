@@ -1,38 +1,23 @@
-use url::Url;
+use tokio::net::TcpStream;
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use futures::{stream::SplitSink, StreamExt};
+use serde::Deserialize;
 
-struct SpectatorModeClient {
-
+#[derive(Deserialize)]
+pub struct BridgeInfo {
+    pub bridge_id: String,
+    // reconnect_token: String
 }
 
-impl SpectatorModeClient {
-  async fn run(&self) -> Result<(), Error> {
+pub async fn connect(address: String) -> (BridgeInfo, SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>) {
+    let (ws_stream, _) = connect_async(address).await.expect("Failed to connect");
+    let (sink, mut stream) = ws_stream.split();
 
-  }
-}
-
-struct ClientConfig {
-  url: Url
-}
-
-pub fn initiate_connection(config: ClientConfig) -> SpectatorModeClient {
-
-}
-
-
-fn parse_connect_reply(reply: Message) -> Result<(String, String), &'static str> {
-    match reply {
-        Message::Text(bytes) => {
-            let v: Value = serde_json::from_str(bytes.as_str()).unwrap();
-            if let Value::String(bridge_id) = &v["bridge_id"] {
-                if let Value::String(reconnect_token) = &v["reconnect_token"] {
-                    Ok((bridge_id.to_string(), reconnect_token.to_string()))
-                } else {
-                    Err("where's reconnect token?")
-                }
-            } else {
-                Err("where's bridge id?")
-            }
-        }
-        _ => Err("didn't expect that!"),
+    // TODO: Result return type
+    if let Message::Text(first_message) = stream.next().await.unwrap().unwrap() {
+        let bridge_info = serde_json::from_str(first_message.as_str()).unwrap();
+        (bridge_info, sink)
+    } else {
+        panic!("AHHHHHHH");
     }
 }
