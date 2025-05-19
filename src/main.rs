@@ -2,12 +2,14 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
-use futures::{StreamExt, stream_select};
+use futures::{stream_select, SinkExt, StreamExt};
+use futures_util::pin_mut;
 use signal_hook;
 use signal_hook_tokio::Signals;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
 
 mod dolphin_connection;
+mod spectator_mode_client;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -25,7 +27,7 @@ struct Args {
 
 enum EventOrSignal {
     Event(ConnectionEvent),
-    Signal(i32),
+    Signal(i32)
 }
 
 #[tokio::main]
@@ -34,26 +36,23 @@ async fn main() {
     println!("[CTRL + C to quit]\n");
 
     let conn = dolphin_connection::DolphinConnection::new();
-    let address = SocketAddr::from_str(&args.source).unwrap();
+    let address = SocketAddr::from_str(&args.source).expect("Invalid socket address");
     let pid = conn.initiate_connection(address);
     conn.wait_for_connected().await;
     println!("Connected to Slippi.");
 
-    let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
-    println!("Connected to SpectatorMode.");
-    let (sink, mut _stream) = ws_stream.split();
-
-    let dolphin_event_stream = conn.catch_up_stream().chain(conn.event_stream());
+    let (bridge_info, sink) = spectator_mode_client::connect(args.dest).await.expect("Error connecting to Spectator Mode");
+    println!("Connected to SpectatorMode with stream ID: {}", bridge_info.bridge_id);
 
     let signals = Signals::new(&[signal_hook::consts::SIGINT]).unwrap();
     let handle = signals.handle();
 
     let mapped_signals = signals.map(|s| EventOrSignal::Signal(s));
-    let mapped_events = dolphin_event_stream.map(|e| EventOrSignal::Event(e));
-
+    let mapped_events = conn.event_stream().map(|e| EventOrSignal::Event(e));
     let combined = stream_select!(mapped_signals, mapped_events);
 
     let mut interrupted = false;
+    pin_mut!(sink);
 
     let dolphin_to_sm = combined
         .map(|e| {
@@ -72,10 +71,7 @@ async fn main() {
                 EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
-                EventOrSignal::Event(ConnectionEvent::Disconnect) => {
-                    println!("Disconnected.");
-                    handle.close();
-                },
+                EventOrSignal::Event(ConnectionEvent::Disconnect) => handle.close(),
                 _ => (),
             };
             e
@@ -84,12 +80,11 @@ async fn main() {
             EventOrSignal::Event(ConnectionEvent::Message { payload }) => {
                 Some(Ok(Message::Binary(payload.into())))
             }
-            EventOrSignal::Event(ConnectionEvent::Disconnect) => {
-                Some(Ok(Message::Text("quit".into())))
-            }
             _ => None,
         })
-        .forward(sink);
+        .forward(&mut sink);
 
     dolphin_to_sm.await.unwrap();
+    sink.close().await.unwrap();
+    println!("Disconnected.");
 }

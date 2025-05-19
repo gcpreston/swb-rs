@@ -9,7 +9,7 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
     future,
     stream::{self, Stream},
-    task::{Context, Poll},
+    task::{Context, Poll}, StreamExt,
 };
 use rusty_enet as enet;
 use serde::de::Error;
@@ -31,7 +31,6 @@ pub struct DolphinConnection {
 
 const MAX_PEERS: usize = 32;
 
-// TODO: Graceful shutdown on stop
 impl DolphinConnection {
     pub fn new() -> DolphinConnection {
         let socket =
@@ -85,7 +84,11 @@ impl DolphinConnection {
         peer.disconnect(1337);
     }
 
-    pub fn catch_up_stream(&self) -> impl Stream<Item = ConnectionEvent> {
+    pub fn event_stream(&self) -> impl Stream<Item = ConnectionEvent> {
+        self.catch_up_stream().chain(self.live_stream())
+    }
+
+    fn catch_up_stream(&self) -> impl Stream<Item = ConnectionEvent> {
         stream::poll_fn(|cx: &mut Context<'_>| {
             if let Some(event) = self.service().unwrap() {
                 cx.waker().clone().wake();
@@ -96,7 +99,7 @@ impl DolphinConnection {
         })
     }
 
-    pub fn event_stream(&self) -> impl Stream<Item = ConnectionEvent> {
+    fn live_stream(&self) -> impl Stream<Item = ConnectionEvent> {
         // Poll Dolphin connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
         let mut dcd = false;

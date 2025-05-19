@@ -1,38 +1,38 @@
-use url::Url;
+use tokio::net::TcpStream;
+use tokio_tungstenite::{connect_async, tungstenite::{self, Message}, MaybeTlsStream, WebSocketStream};
+use futures::{stream::SplitSink, StreamExt};
+use serde::Deserialize;
+use thiserror::Error;
 
-struct SpectatorModeClient {
-
+#[derive(Deserialize)]
+pub struct BridgeInfo {
+    pub bridge_id: String,
+    // reconnect_token: String
 }
 
-impl SpectatorModeClient {
-  async fn run(&self) -> Result<(), Error> {
-
-  }
+#[derive(Error, Debug)]
+pub enum ConnectError {
+    #[error("Connection closed normally")]
+    Exhausted,
+    #[error("WebSocket error: {0}")]
+    WebSocketError(#[from] tungstenite::Error),
+    #[error("JSON decode error: {0}")]
+    UnexpectedMessageSchema(#[from] serde_json::Error),
+    #[error("Expected a text message")]
+    UnexpectedMessageType
 }
 
-struct ClientConfig {
-  url: Url
-}
+pub async fn connect(address: String) -> Result<(BridgeInfo, SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>), ConnectError> {
+    let (ws_stream, _) = connect_async(address).await?;
+    let (sink, mut stream) = ws_stream.split();
 
-pub fn initiate_connection(config: ClientConfig) -> SpectatorModeClient {
-
-}
-
-
-fn parse_connect_reply(reply: Message) -> Result<(String, String), &'static str> {
-    match reply {
-        Message::Text(bytes) => {
-            let v: Value = serde_json::from_str(bytes.as_str()).unwrap();
-            if let Value::String(bridge_id) = &v["bridge_id"] {
-                if let Value::String(reconnect_token) = &v["reconnect_token"] {
-                    Ok((bridge_id.to_string(), reconnect_token.to_string()))
-                } else {
-                    Err("where's reconnect token?")
-                }
-            } else {
-                Err("where's bridge id?")
-            }
+    match stream.next().await {
+        None => Result::Err(ConnectError::Exhausted),
+        Some(Result::Err(e)) => Result::Err(ConnectError::WebSocketError(e)),
+        Some(Ok(Message::Text(content))) => {
+            let bridge_info = serde_json::from_str::<BridgeInfo>(content.as_str())?;
+            Result::Ok((bridge_info, sink))
         }
-        _ => Err("didn't expect that!"),
+        Some(Ok(_)) => Result::Err(ConnectError::UnexpectedMessageType)
     }
 }
