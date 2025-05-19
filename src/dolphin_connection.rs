@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     str,
     time::Duration,
@@ -6,6 +7,7 @@ use std::{
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
+    future,
     stream::{self, Stream},
     task::{Context, Poll},
 };
@@ -24,7 +26,7 @@ pub enum ConnectionEvent {
 }
 
 pub struct DolphinConnection {
-    host: enet::Host<UdpSocket>,
+    c: RefCell<enet::Host<UdpSocket>>,
 }
 
 const MAX_PEERS: usize = 32;
@@ -44,38 +46,91 @@ impl DolphinConnection {
         )
         .unwrap();
 
-        Self { host }
+        let c = RefCell::new(host);
+        Self { c }
     }
 
-    pub fn initiate_connection(&mut self, addr: SocketAddr) {
-        let peer = self.host.connect(addr, 3, 1337).unwrap();
+    pub fn initiate_connection(&self, addr: SocketAddr) -> enet::PeerID {
+        let mut host = self.c.borrow_mut();
+        let peer = host.connect(addr, 3, 1337).unwrap();
         peer.set_ping_interval(100);
+        peer.id()
     }
 
-    pub fn event_stream(&mut self) -> impl Stream<Item = ConnectionEvent> {
-        // Poll Dolphin connection at 120Hz
+    pub async fn wait_for_connected(&self) {
+        // 120Hz
         let mut i = interval(Duration::from_micros(8333));
 
-        stream::poll_fn(move |cx: &mut Context<'_>| {
+        future::poll_fn(|cx: &mut Context<'_>| {
             let p = i.poll_tick(cx);
             match p {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => match self.service() {
-                    Result::Err(_e) => Poll::Ready(None),
-                    Result::Ok(None) => {
-                        cx.waker().clone().wake();
-                        Poll::Pending
+                Poll::Ready(_) => {
+                    match self.service() {
+                        Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
+                        _ => {
+                            cx.waker().clone().wake();
+                            Poll::Pending
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+    }
+
+    pub fn initiate_disconnect(&self, pid: enet::PeerID) {
+        let mut host = self.c.borrow_mut();
+        let peer = host.peer_mut(pid);
+        peer.disconnect(1337);
+    }
+
+    pub fn catch_up_stream(&self) -> impl Stream<Item = ConnectionEvent> {
+        stream::poll_fn(|cx: &mut Context<'_>| {
+            if let Some(event) = self.service().unwrap() {
+                cx.waker().clone().wake();
+                Poll::Ready(Some(event))
+            } else {
+                Poll::Ready(None)
+            }
+        })
+    }
+
+    pub fn event_stream(&self) -> impl Stream<Item = ConnectionEvent> {
+        // Poll Dolphin connection at 120Hz
+        let mut i = interval(Duration::from_micros(8333));
+        let mut dcd = false;
+
+        stream::poll_fn(move |cx: &mut Context<'_>| {
+            if dcd {
+                Poll::Ready(None)
+            } else {
+                let p = i.poll_tick(cx);
+                match p {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(_) => match self.service() {
+                        Result::Err(_e) => Poll::Ready(None),
+                        Result::Ok(None) => {
+                            cx.waker().clone().wake();
+                            Poll::Pending
+                        }
+                        Result::Ok(Some(ConnectionEvent::Disconnect)) => {
+                            dcd = true;
+                            Poll::Ready(Some(ConnectionEvent::Disconnect))
+                        }
+                        // Naive approach
+                        Result::Ok(Some(event)) => Poll::Ready(Some(event)),
                     },
-                    Result::Ok(Some(ConnectionEvent::Disconnect)) => Poll::Ready(None),
-                    Result::Ok(Some(event)) => Poll::Ready(Some(event)),
-                },
+                }
             }
         })
     }
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
-    pub fn service(&mut self) -> Result<Option<ConnectionEvent>, &'static str> {
-        match self.host.service() {
+    fn service(&self) -> Result<Option<ConnectionEvent>, &'static str> {
+        let mut host = self.c.borrow_mut();
+
+        match host.service() {
             Err(_) => Err("host service error"),
 
             Ok(None) => Ok(None),
