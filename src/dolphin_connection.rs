@@ -3,6 +3,7 @@ use std::{
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
+use crossbeam_channel::{Receiver, TryRecvError};
 use futures::{
     future, stream::{self, Stream}, task::{Context, Poll}
 };
@@ -22,13 +23,14 @@ pub enum ConnectionEvent {
 
 pub struct DolphinConnection {
     c: RefCell<enet::Host<UdpSocket>>,
+    signal_receiver: Receiver<()>
 }
 
 const MAX_PEERS: usize = 32;
 
 // TODO: Graceful shutdown on stop
 impl DolphinConnection {
-    pub fn new() -> DolphinConnection {
+    pub fn new(signal_receiver: Receiver<()>) -> DolphinConnection {
         let socket =
             UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).unwrap();
         let host = enet::Host::<UdpSocket>::new(
@@ -42,7 +44,7 @@ impl DolphinConnection {
         .unwrap();
 
         let c = RefCell::new(host);
-        Self { c }
+        Self { c, signal_receiver }
     }
 
     pub fn initiate_connection(&self, addr: SocketAddr) -> enet::PeerID {
@@ -97,19 +99,31 @@ impl DolphinConnection {
         let mut i = interval(Duration::from_micros(8333));
 
         stream::poll_fn(move |cx: &mut Context<'_>| {
-            let p = i.poll_tick(cx);
-            match p {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => match self.service() {
-                    Result::Err(_e) => Poll::Ready(None),
-                    Result::Ok(None) => {
-                        cx.waker().clone().wake();
-                        Poll::Pending
-                    },
-                    Result::Ok(Some(ConnectionEvent::Disconnect)) => Poll::Ready(None),
-                    // Naive approach
-                    Result::Ok(Some(event)) => Poll::Ready(Some(event)),
+            match self.signal_receiver.try_recv() {
+                Err(TryRecvError::Disconnected) => {
+                    println!("Disconnected from channel");
+                    Poll::Ready(None)
                 },
+                Ok(_) => {
+                    println!("Got ctrl-c, goodbye!");
+                    Poll::Ready(None)
+                }
+                Err(TryRecvError::Empty) => {
+                    let p = i.poll_tick(cx);
+                    match p {
+                        Poll::Pending => Poll::Pending,
+                        Poll::Ready(_) => match self.service() {
+                            Result::Err(_e) => Poll::Ready(None),
+                            Result::Ok(None) => {
+                                cx.waker().clone().wake();
+                                Poll::Pending
+                            },
+                            Result::Ok(Some(ConnectionEvent::Disconnect)) => Poll::Ready(None),
+                            // Naive approach
+                            Result::Ok(Some(event)) => Poll::Ready(Some(event)),
+                        },
+                    }
+                }
             }
         })
     }

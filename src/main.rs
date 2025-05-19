@@ -2,11 +2,14 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
+use futures::SinkExt;
 use futures_util::stream::StreamExt;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Bytes, Message},
 };
+use ctrlc;
+use crossbeam_channel::{bounded, Receiver, select};
 
 mod dolphin_connection;
 
@@ -24,17 +27,23 @@ struct Args {
     source: String,
 }
 
-// Goal right now
-// - Whenever there is something to send, send in a loop until exhausted
-// - Once exhausted, fall back to interval
+fn ctrl_channel() -> Result<Receiver<()>, ctrlc::Error> {
+    let (sender, receiver) = bounded(100);
+    ctrlc::set_handler(move || {
+        let _ = sender.send(());
+    })?;
+
+    Ok(receiver)
+}
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    let ctrl_c_events = ctrl_channel().unwrap();
 
-    let conn = dolphin_connection::DolphinConnection::new();
+    let conn = dolphin_connection::DolphinConnection::new(ctrl_c_events);
     let address = SocketAddr::from_str(&args.source).unwrap();
-    conn.initiate_connection(address);
+    let pid = conn.initiate_connection(address);
     conn.wait_for_connected().await;
 
     let (ws_stream, _) = connect_async(&args.dest).await.expect("Failed to connect");
