@@ -7,9 +7,9 @@ use std::{
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
-    future,
+    StreamExt, future,
     stream::{self, Stream},
-    task::{Context, Poll}, StreamExt,
+    task::{Context, Poll},
 };
 use rusty_enet as enet;
 use serde::de::Error;
@@ -64,15 +64,13 @@ impl DolphinConnection {
             let p = i.poll_tick(cx);
             match p {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => {
-                    match self.service() {
-                        Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
-                        _ => {
-                            cx.waker().clone().wake();
-                            Poll::Pending
-                        }
+                Poll::Ready(_) => match self.service() {
+                    Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
+                    _ => {
+                        cx.waker().clone().wake();
+                        Poll::Pending
                     }
-                }
+                },
             }
         })
         .await;

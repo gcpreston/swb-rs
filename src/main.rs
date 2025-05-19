@@ -2,7 +2,7 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
-use futures::{stream_select, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, stream_select};
 use futures_util::pin_mut;
 use signal_hook;
 use signal_hook_tokio::Signals;
@@ -27,7 +27,7 @@ struct Args {
 
 enum EventOrSignal {
     Event(ConnectionEvent),
-    Signal(i32)
+    Signal(i32),
 }
 
 #[tokio::main]
@@ -41,8 +41,13 @@ async fn main() {
     conn.wait_for_connected().await;
     println!("Connected to Slippi.");
 
-    let (bridge_info, sink) = spectator_mode_client::connect(args.dest).await.expect("Error connecting to Spectator Mode");
-    println!("Connected to SpectatorMode with stream ID: {}", bridge_info.bridge_id);
+    let (bridge_info, sink) = spectator_mode_client::connect(args.dest)
+        .await
+        .expect("Error connecting to Spectator Mode");
+    println!(
+        "Connected to SpectatorMode with stream ID: {}",
+        bridge_info.bridge_id
+    );
 
     let signals = Signals::new(&[signal_hook::consts::SIGINT]).unwrap();
     let handle = signals.handle();
@@ -67,7 +72,7 @@ async fn main() {
                     } else {
                         std::process::exit(n);
                     }
-                },
+                }
                 EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
                 EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
                 EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
