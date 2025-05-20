@@ -1,49 +1,83 @@
-use futures::{StreamExt, stream::SplitSink};
-use serde::Deserialize;
+use std::pin::Pin;
+use futures::{Sink, task::{Poll, Context}};
 use thiserror::Error;
-use tokio::net::TcpStream;
-use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
-    tungstenite::{self, Message},
-};
 
-#[derive(Deserialize)]
-pub struct BridgeInfo {
-    pub bridge_id: String,
-    // reconnect_token: String
-}
+use async_trait::async_trait;
+use ezsockets::{Bytes, ClientConfig};
+use ezsockets::{Error, SendError};
+use url::Url;
 
 #[derive(Error, Debug)]
 pub enum ConnectError {
-    #[error("Connection closed normally")]
-    Exhausted,
-    #[error("WebSocket error: {0}")]
-    WebSocketError(#[from] tungstenite::Error),
-    #[error("JSON decode error: {0}")]
-    UnexpectedMessageSchema(#[from] serde_json::Error),
-    #[error("Expected a text message")]
-    UnexpectedMessageType,
+    #[error("Send error: {0}")]
+    SendError(#[from] SendError<Call>),
+
+    #[error("Close error: {0}")]
+    CloseError(#[from] SendError<ezsockets::InMessage>),
 }
 
-pub async fn connect(
-    address: String,
-) -> Result<
-    (
-        BridgeInfo,
-        SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    ),
-    ConnectError,
-> {
-    let (ws_stream, _) = connect_async(address).await?;
-    let (sink, mut stream) = ws_stream.split();
+pub struct MyClient {
+    handle: ezsockets::Client<Self>,
+}
 
-    match stream.next().await {
-        None => Result::Err(ConnectError::Exhausted),
-        Some(Result::Err(e)) => Result::Err(ConnectError::WebSocketError(e)),
-        Some(Ok(Message::Text(content))) => {
-            let bridge_info = serde_json::from_str::<BridgeInfo>(content.as_str())?;
-            Result::Ok((bridge_info, sink))
-        }
-        Some(Ok(_)) => Result::Err(ConnectError::UnexpectedMessageType),
+pub struct SpectatorModeClient {
+    ws_client: ezsockets::Client<MyClient>
+}
+
+pub enum Call {
+    GameData(Bytes),
+}
+
+#[async_trait]
+impl ezsockets::ClientExt for MyClient {
+    type Call = Call;
+
+    async fn on_text(&mut self, _text: ezsockets::Utf8Bytes) -> Result<(), Error> {
+        Ok(())
     }
+
+    async fn on_binary(&mut self, _bytes: ezsockets::Bytes) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn on_call(&mut self, call: Self::Call) -> Result<(), Error> {
+        match call {
+            Call::GameData(payload) => {
+                self.handle.binary(payload).unwrap();
+            }
+        };
+        Ok(())
+    }
+}
+
+impl Sink<Bytes> for SpectatorModeClient {
+    type Error = ConnectError;
+
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        self.ws_client.call(Call::GameData(item))?;
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.ws_client.close(None)?;
+        Poll::Ready(Ok(()))
+    }
+}
+
+pub async fn connect(address: &str) -> SpectatorModeClient {
+    let url = Url::parse(address).unwrap();
+    let config = ClientConfig::new(url);
+    let (sm_handle, _future) = ezsockets::connect(|handle| MyClient { handle }, config).await;
+    // TODO: Actually wait for connect
+    // tracing::info!("Connected to SpectatorMode.");
+
+    SpectatorModeClient { ws_client: sm_handle }
 }
