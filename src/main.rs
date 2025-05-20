@@ -2,11 +2,11 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
-use futures::{stream_select, SinkExt, StreamExt};
+use ezsockets::Bytes;
+use futures::{SinkExt, StreamExt, stream_select};
 use futures_util::pin_mut;
 use signal_hook;
 use signal_hook_tokio::Signals;
-use tokio_tungstenite::tungstenite::Message;
 
 mod dolphin_connection;
 mod spectator_mode_client;
@@ -27,11 +27,12 @@ struct Args {
 
 enum EventOrSignal {
     Event(ConnectionEvent),
-    Signal(i32)
+    Signal(i32),
 }
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     let args = Args::parse();
     println!("[CTRL + C to quit]\n");
 
@@ -39,10 +40,9 @@ async fn main() {
     let address = SocketAddr::from_str(&args.source).expect("Invalid socket address");
     let pid = conn.initiate_connection(address);
     conn.wait_for_connected().await;
-    println!("Connected to Slippi.");
+    tracing::info!("Connected to Slippi.");
 
-    let (bridge_info, sink) = spectator_mode_client::connect(args.dest).await.expect("Error connecting to Spectator Mode");
-    println!("Connected to SpectatorMode with stream ID: {}", bridge_info.bridge_id);
+    let sm_client = spectator_mode_client::initiate_connection(&args.dest).await;
 
     let signals = Signals::new(&[signal_hook::consts::SIGINT]).unwrap();
     let handle = signals.handle();
@@ -52,25 +52,28 @@ async fn main() {
     let combined = stream_select!(mapped_signals, mapped_events);
 
     let mut interrupted = false;
-    pin_mut!(sink);
+    pin_mut!(sm_client);
 
     let dolphin_to_sm = combined
         .map(|e| {
-            // ConnectionEvent::Disconnected will not reach the stream because
-            // it is sent as Poll::Ready(None), i.e. the stream end.
+            // ConnectionEvent::Connected will not reach the stream because
+            // it is awaited before initiating the SpectatorMode connection.
             match e {
                 EventOrSignal::Signal(n) => {
                     if !interrupted {
-                        println!("Disconnecting...");
+                        tracing::info!("Disconnecting...");
                         conn.initiate_disconnect(pid);
                         interrupted = true;
                     } else {
                         std::process::exit(n);
                     }
-                },
-                EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
-                EventOrSignal::Event(ConnectionEvent::StartGame) => println!("Game start"),
-                EventOrSignal::Event(ConnectionEvent::EndGame) => println!("Game end"),
+                }
+                EventOrSignal::Event(ConnectionEvent::StartGame) => {
+                    tracing::info!("Received game start event.")
+                }
+                EventOrSignal::Event(ConnectionEvent::EndGame) => {
+                    tracing::info!("Received game end event.")
+                }
                 EventOrSignal::Event(ConnectionEvent::Disconnect) => handle.close(),
                 _ => (),
             };
@@ -78,13 +81,13 @@ async fn main() {
         })
         .filter_map(async |e| match e {
             EventOrSignal::Event(ConnectionEvent::Message { payload }) => {
-                Some(Ok(Message::Binary(payload.into())))
+                Some(Ok(Bytes::from(payload)))
             }
             _ => None,
         })
-        .forward(&mut sink);
+        .forward(&mut sm_client);
 
     dolphin_to_sm.await.unwrap();
-    sink.close().await.unwrap();
-    println!("Disconnected.");
+    sm_client.close().await.unwrap();
+    tracing::info!("Disconnected.");
 }
