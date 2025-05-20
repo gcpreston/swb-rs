@@ -2,11 +2,11 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
+use ezsockets::Bytes;
 use futures::{SinkExt, StreamExt, stream_select};
 use futures_util::pin_mut;
 use signal_hook;
 use signal_hook_tokio::Signals;
-use ezsockets::Bytes;
 
 mod dolphin_connection;
 mod spectator_mode_client;
@@ -68,8 +68,12 @@ async fn main() {
                         std::process::exit(n);
                     }
                 }
-                EventOrSignal::Event(ConnectionEvent::StartGame) => tracing::info!("Received game start event."),
-                EventOrSignal::Event(ConnectionEvent::EndGame) => tracing::info!("Received game end event."),
+                EventOrSignal::Event(ConnectionEvent::StartGame) => {
+                    tracing::info!("Received game start event.")
+                }
+                EventOrSignal::Event(ConnectionEvent::EndGame) => {
+                    tracing::info!("Received game end event.")
+                }
                 EventOrSignal::Event(ConnectionEvent::Disconnect) => handle.close(),
                 _ => (),
             };
