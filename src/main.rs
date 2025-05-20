@@ -17,7 +17,7 @@ struct Args {
     #[arg(
         short,
         long,
-        default_value = "ws://localhost:4000/bridge_socket/websocket"
+        default_value = "wss://ssbm.tv/bridge_socket/websocket"
     )]
     dest: String,
 
