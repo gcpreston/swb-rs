@@ -1,11 +1,12 @@
 use std::pin::Pin;
 use futures::{Sink, task::{Poll, Context}};
 use thiserror::Error;
-
 use async_trait::async_trait;
 use ezsockets::{Bytes, ClientConfig};
 use ezsockets::{Error, SendError};
 use url::Url;
+use serde::Deserialize;
+
 
 #[derive(Error, Debug)]
 pub enum ConnectError {
@@ -17,7 +18,7 @@ pub enum ConnectError {
 }
 
 pub struct MyClient {
-    handle: ezsockets::Client<Self>,
+    handle: ezsockets::Client<Self>
 }
 
 pub struct SpectatorModeClient {
@@ -28,11 +29,19 @@ pub enum Call {
     GameData(Bytes),
 }
 
+#[derive(Deserialize)]
+pub struct BridgeInfo {
+    pub bridge_id: String,
+}
+
+
 #[async_trait]
 impl ezsockets::ClientExt for MyClient {
     type Call = Call;
 
-    async fn on_text(&mut self, _text: ezsockets::Utf8Bytes) -> Result<(), Error> {
+    async fn on_text(&mut self, text: ezsockets::Utf8Bytes) -> Result<(), Error> {
+        let bridge_info = serde_json::from_str::<BridgeInfo>(text.as_str())?;
+        tracing::info!("Connected to SpectatorMode with stream ID {}", bridge_info.bridge_id);
         Ok(())
     }
 
@@ -72,12 +81,10 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn connect(address: &str) -> SpectatorModeClient {
+pub async fn initiate_connection(address: &str) -> SpectatorModeClient {
     let url = Url::parse(address).unwrap();
     let config = ClientConfig::new(url);
     let (sm_handle, _future) = ezsockets::connect(|handle| MyClient { handle }, config).await;
-    // TODO: Actually wait for connect
-    // tracing::info!("Connected to SpectatorMode.");
 
     SpectatorModeClient { ws_client: sm_handle }
 }

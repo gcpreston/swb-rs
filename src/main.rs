@@ -42,7 +42,7 @@ async fn main() {
     conn.wait_for_connected().await;
     tracing::info!("Connected to Slippi.");
 
-    let sm_client = spectator_mode_client::connect(&args.dest).await;
+    let sm_client = spectator_mode_client::initiate_connection(&args.dest).await;
 
     let signals = Signals::new(&[signal_hook::consts::SIGINT]).unwrap();
     let handle = signals.handle();
@@ -56,8 +56,8 @@ async fn main() {
 
     let dolphin_to_sm = combined
         .map(|e| {
-            // ConnectionEvent::Disconnected will not reach the stream because
-            // it is sent as Poll::Ready(None), i.e. the stream end.
+            // ConnectionEvent::Connected will not reach the stream because
+            // it is awaited before initiating the SpectatorMode connection.
             match e {
                 EventOrSignal::Signal(n) => {
                     if !interrupted {
@@ -68,9 +68,8 @@ async fn main() {
                         std::process::exit(n);
                     }
                 }
-                // EventOrSignal::Event(ConnectionEvent::Connect) => println!("Connected to Slippi."),
-                EventOrSignal::Event(ConnectionEvent::StartGame) => tracing::info!("Game start"),
-                EventOrSignal::Event(ConnectionEvent::EndGame) => tracing::info!("Game end"),
+                EventOrSignal::Event(ConnectionEvent::StartGame) => tracing::info!("Received game start event."),
+                EventOrSignal::Event(ConnectionEvent::EndGame) => tracing::info!("Received game end event."),
                 EventOrSignal::Event(ConnectionEvent::Disconnect) => handle.close(),
                 _ => (),
             };
