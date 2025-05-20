@@ -331,6 +331,7 @@ checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 [[package]]
 name = "ezsockets"
 version = "0.7.0"
+source = "git+https://github.com/gcpreston/ezsockets.git?branch=swb-reconnect-token#ec4488d19916cbb28724d4c3d69e0299544b7a0d"
 dependencies = [
  "async-channel",
  "async-trait",

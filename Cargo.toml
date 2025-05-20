@@ -16,7 +16,7 @@ futures = "0.3.31"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 signal-hook = "0.3.18"
 thiserror = "2.0.12"
-ezsockets = { path = "../../open_src/ezsockets" }
+ezsockets = { git = "https://github.com/gcpreston/ezsockets.git", branch = "swb-reconnect-token" }
 url = "2.5.4"
 async-trait = "0.1.88"
 tracing = "0.1.41"
