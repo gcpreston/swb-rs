@@ -7,11 +7,13 @@ use std::{
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
-    StreamExt, future,
+    StreamExt,
+    channel::mpsc::Receiver,
+    future,
     stream::{self, Stream},
     task::{Context, Poll},
 };
-use rusty_enet as enet;
+use rusty_enet::{self as enet};
 use serde::de::Error;
 use serde_json::{Result as SerdeResult, Value};
 use tokio::time::interval;
@@ -26,13 +28,14 @@ pub enum ConnectionEvent {
 }
 
 pub struct DolphinConnection {
-    c: RefCell<enet::Host<UdpSocket>>,
+    host_cell: RefCell<enet::Host<UdpSocket>>,
+    interrupt_cell: RefCell<Receiver<enet::PeerID>>,
 }
 
 const MAX_PEERS: usize = 32;
 
 impl DolphinConnection {
-    pub fn new() -> DolphinConnection {
+    pub fn new(interrupt_receiver: Receiver<enet::PeerID>) -> DolphinConnection {
         let socket =
             UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).unwrap();
         let host = enet::Host::<UdpSocket>::new(
@@ -45,12 +48,16 @@ impl DolphinConnection {
         )
         .unwrap();
 
-        let c = RefCell::new(host);
-        Self { c }
+        let host_cell = RefCell::new(host);
+        let interrupt_cell = RefCell::new(interrupt_receiver);
+        Self {
+            host_cell,
+            interrupt_cell,
+        }
     }
 
     pub fn initiate_connection(&self, addr: SocketAddr) -> enet::PeerID {
-        let mut host = self.c.borrow_mut();
+        let mut host = self.host_cell.borrow_mut();
         let peer = host.connect(addr, 3, 1337).unwrap();
         peer.set_ping_interval(100);
         peer.id()
@@ -76,9 +83,9 @@ impl DolphinConnection {
         .await;
     }
 
-    pub fn initiate_disconnect(&self, pid: enet::PeerID) {
-        let mut host = self.c.borrow_mut();
-        let peer = host.peer_mut(pid);
+    pub fn initiate_disconnect(&self, peer_id: enet::PeerID) {
+        let mut host = self.host_cell.borrow_mut();
+        let peer = host.peer_mut(peer_id);
         peer.disconnect(1337);
     }
 
@@ -129,7 +136,14 @@ impl DolphinConnection {
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
     fn service(&self) -> Result<Option<ConnectionEvent>, &'static str> {
-        let mut host = self.c.borrow_mut();
+        let mut interrupt_receiver = self.interrupt_cell.borrow_mut();
+
+        if let Ok(Some(peer_id)) = interrupt_receiver.try_next() {
+            self.initiate_disconnect(peer_id);
+            return Ok(None);
+        }
+
+        let mut host = self.host_cell.borrow_mut();
 
         match host.service() {
             Err(_) => Err("host service error"),

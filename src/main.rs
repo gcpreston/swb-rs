@@ -3,10 +3,9 @@ use std::{net::SocketAddr, str::FromStr};
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
 use ezsockets::Bytes;
-use futures::{SinkExt, StreamExt, stream_select};
+use futures::{SinkExt, StreamExt, channel::mpsc::channel};
 use futures_util::pin_mut;
-use signal_hook;
-use signal_hook_tokio::Signals;
+use rusty_enet as enet;
 
 mod dolphin_connection;
 mod spectator_mode_client;
@@ -14,20 +13,11 @@ mod spectator_mode_client;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(
-        short,
-        long,
-        default_value = "wss://ssbm.tv/bridge_socket/websocket"
-    )]
+    #[arg(short, long, default_value = "wss://ssbm.tv/bridge_socket/websocket")]
     dest: String,
 
     #[arg(short, long, default_value = "127.0.0.1:51441")]
     source: String,
-}
-
-enum EventOrSignal {
-    Event(ConnectionEvent),
-    Signal(i32),
 }
 
 #[tokio::main]
@@ -36,54 +26,47 @@ async fn main() {
     let args = Args::parse();
     println!("[CTRL + C to quit]\n");
 
-    let conn = dolphin_connection::DolphinConnection::new();
+    let (mut sender, receiver) = channel::<enet::PeerID>(100);
+    let mut already_interrupted = false;
+
+    let conn = dolphin_connection::DolphinConnection::new(receiver);
     let address = SocketAddr::from_str(&args.source).expect("Invalid socket address");
-    let pid = conn.initiate_connection(address);
+    let peer_id = conn.initiate_connection(address);
     conn.wait_for_connected().await;
     tracing::info!("Connected to Slippi.");
 
+    ctrlc::set_handler(move || {
+        if already_interrupted {
+            std::process::exit(2);
+        } else {
+            already_interrupted = true;
+            tracing::info!("Disconnecting...");
+            sender.try_send(peer_id).unwrap();
+        }
+    })
+    .unwrap();
+
     let sm_client = spectator_mode_client::initiate_connection(&args.dest).await;
 
-    let signals = Signals::new(&[signal_hook::consts::SIGINT]).unwrap();
-    let handle = signals.handle();
-
-    let mapped_signals = signals.map(|s| EventOrSignal::Signal(s));
-    let mapped_events = conn.event_stream().map(|e| EventOrSignal::Event(e));
-    let combined = stream_select!(mapped_signals, mapped_events);
-
-    let mut interrupted = false;
     pin_mut!(sm_client);
 
-    let dolphin_to_sm = combined
-        .map(|e| {
+    let dolphin_to_sm = conn
+        .event_stream()
+        .filter_map(async |e| {
+            // Side-effects (logs)
             // ConnectionEvent::Connected will not reach the stream because
             // it is awaited before initiating the SpectatorMode connection.
             match e {
-                EventOrSignal::Signal(n) => {
-                    if !interrupted {
-                        tracing::info!("Disconnecting...");
-                        conn.initiate_disconnect(pid);
-                        interrupted = true;
-                    } else {
-                        std::process::exit(n);
-                    }
-                }
-                EventOrSignal::Event(ConnectionEvent::StartGame) => {
-                    tracing::info!("Received game start event.")
-                }
-                EventOrSignal::Event(ConnectionEvent::EndGame) => {
-                    tracing::info!("Received game end event.")
-                }
-                EventOrSignal::Event(ConnectionEvent::Disconnect) => handle.close(),
+                ConnectionEvent::StartGame => tracing::info!("Received game start event."),
+                ConnectionEvent::EndGame => tracing::info!("Received game end event."),
                 _ => (),
             };
-            e
-        })
-        .filter_map(async |e| match e {
-            EventOrSignal::Event(ConnectionEvent::Message { payload }) => {
-                Some(Ok(Bytes::from(payload)))
+
+            // Return
+            match e {
+                ConnectionEvent::Message { payload } => Some(Ok(Bytes::from(payload))),
+                _ => None,
             }
-            _ => None,
         })
         .forward(&mut sm_client);
 
