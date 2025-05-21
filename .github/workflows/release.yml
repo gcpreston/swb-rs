@@ -14,9 +14,8 @@ jobs:
       matrix:
         include:
           - rust_target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
             artifact_name: binary-bin-linux-amd64
-          - rust_target: x86_64-pc-windows-gnu
-            artifact_name: binary-bin-windows-amd64.exe
 
     steps:
       - name: checkout code
@@ -34,11 +33,32 @@ jobs:
 
       - name: Build the binary
         run: |
-          cargo build --release --target ${{ matrix.rust_target }}
+          cargo build --verbose --release --target ${{ matrix.rust_target }}
           if [[ "${{ matrix.artifact_name }}" == *.exe ]]; then
             mv target/${{ matrix.rust_target }}/release/swb.exe ${{ matrix.artifact_name }}
           else
             mv target/${{ matrix.rust_target }}/release/swb ${{ matrix.artifact_name }}
+          fi
+
+      - name: Build archive
+        shell: bash
+        run: |
+          binary_name="swb"
+
+          dirname="$binary_name-${{ env.VERSION }}-${{ matrix.rust_target }}"
+          mkdir "$dirname"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv "target/${{ matrix.rust_target }}/release/$binary_name.exe" "$dirname"
+          else
+            mv "target/${{ matrix.rust_target }}/release/$binary_name" "$dirname"
+          fi
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "$dirname.zip" "$dirname"
+            echo "ASSET=$dirname.zip" >> $GITHUB_ENV
+          else
+            tar -czf "$dirname.tar.gz" "$dirname"
+            echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
           fi
 
       - name: determine tag type
@@ -52,11 +72,9 @@ jobs:
             echo "tag_type=INVALID_TAG" >> $GITHUB_OUTPUT
           fi
 
-      - name: upload binaries to release
-        if: steps.tag_type.outputs.tag_type != 'INVALID_TAG'
-        uses: svenstaro/upload-release-action@v2
+      - name: Release
+        uses: softprops/action-gh-release@v1
         with:
-          file: ${{ matrix.artifact_name }}
-          overwrite: true
           prerelease: ${{ steps.tag_type.outputs.tag_type == 'PRE_RELEASE_TAG' }}
-          tag: ${{ github.ref }}
+          files: |
+            ${{ env.ASSET }}
