@@ -1,0 +1,64 @@
+name: release
+
+on:
+  push:
+    tags:
+    - v[0-9].[0-9]+.[0-9]+
+    - v[0-9].[0-9]+.[0-9]+-rc[0-9]+
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rust_target: x86_64-unknown-linux-gnu
+            artifact_name: binary-bin-linux-amd64
+          - rust_target: x86_64-pc-windows-gnu
+            artifact_name: binary-bin-windows-amd64.exe
+          - rust_target: aarch64-apple-darwin
+            artifact_name: binary-bin-apple-silicon
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: ${{ matrix.rust_target }}
+
+      - name: Install mingw for Windows cross-compilation
+        if: matrix.rust_target == 'x86_64-pc-windows-gnu'
+        run: sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build the binary
+        run: |
+          cargo build --release --target ${{ matrix.rust_target }}
+          if [[ "${{ matrix.artifact_name }}" == *.exe ]]; then
+            mv target/${{ matrix.rust_target }}/release/binary.exe ${{ matrix.artifact_name }}
+          else
+            mv target/${{ matrix.rust_target }}/release/binary ${{ matrix.artifact_name }}
+          fi
+
+      - name: determine tag type
+        id: tag_type
+        run: |
+          if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
+            echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
+          elif [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag_type=RELEASE_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "tag_type=INVALID_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: upload binaries to release
+        if: steps.tag_type.outputs.tag_type != 'INVALID_TAG'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: ${{ matrix.artifact_name }}
+          overwrite: true
+          prerelease: ${{ steps.tag_type.outputs.tag_type == 'PRE_RELEASE_TAG' }}
+          tag: ${{ github.ref }}
