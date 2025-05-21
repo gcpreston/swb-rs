@@ -75,6 +75,7 @@ jobs:
 
       - name: Determine tag type
         id: tag_type
+        shell: bash
         run: |
           if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
