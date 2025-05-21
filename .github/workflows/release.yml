@@ -19,14 +19,15 @@ jobs:
         include:
           - rust_target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+          # musl gets openssl linkage errors
           # - rust_target: x86_64-unknown-linux-musl
           #   os: ubuntu-latest
-          # - rust_target: x86_64-pc-windows-gnu
-          #   os: windows-latest
-          # - rust_target: aarch64-apple-darwin
-          #   os: macos-latest
-          # - rust_target: x86_64-apple-darwin
-          #   os: macos-latest
+          - rust_target: x86_64-pc-windows-gnu
+            os: windows-latest
+          - rust_target: aarch64-apple-darwin
+            os: macos-latest
+          - rust_target: x86_64-apple-darwin
+            os: macos-latest
 
     steps:
       - name: checkout code
@@ -62,8 +63,6 @@ jobs:
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
             mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
-          # elif [[ "${{ matrix.rust_target }}" = "x86_64-unknown-linux-gnu" ]]; then
-          #   mv "target/${{ matrix.rust_target }}/release/swb.d" "$dirname"
           else
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
           fi
