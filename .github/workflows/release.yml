@@ -6,6 +6,9 @@ on:
       - v[0-9]+\.[0-9]+\.[0-9]+
       - v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: build
@@ -16,9 +19,9 @@ jobs:
           - rust_target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact_name: binary-bin-linux-amd64-gnu
-          - rust_target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact_name: binary-bin-linux-amd64-musl
+          # - rust_target: x86_64-unknown-linux-musl
+          #   os: ubuntu-latest
+          #   artifact_name: binary-bin-linux-amd64-musl
 
     steps:
       - name: checkout code
