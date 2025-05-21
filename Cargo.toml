@@ -1,6 +1,6 @@
 [package]
 name = "swb"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -13,7 +13,7 @@ futures-util = "0.3"
 clap = { version = "4.5.38", features = ["derive"] }
 futures = "0.3.31"
 thiserror = "2.0.12"
-ezsockets = { git = "https://github.com/gcpreston/ezsockets.git", branch = "swb-reconnect-token" }
+ezsockets = { git = "https://github.com/gcpreston/ezsockets.git", branch = "swb-reconnect-token", features = ["native-tls"] }
 url = "2.5.4"
 async-trait = "0.1.88"
 tracing = "0.1.41"
