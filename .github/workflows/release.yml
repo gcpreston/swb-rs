@@ -23,10 +23,10 @@ jobs:
           #   os: ubuntu-latest
           # - rust_target: x86_64-pc-windows-gnu
           #   os: windows-latest
-          - rust_target: aarch64-apple-darwin
-            os: macos-latest
-          - rust_target: x86_64-apple-darwin
-            os: macos-latest
+          # - rust_target: aarch64-apple-darwin
+          #   os: macos-latest
+          # - rust_target: x86_64-apple-darwin
+          #   os: macos-latest
 
     steps:
       - name: checkout code
@@ -50,6 +50,9 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.rust_target }}
 
+          ls -la target/
+          ls -la target/${{ matrix.rust_target }}/release
+
       - name: Build archive
         shell: bash
         run: |
@@ -59,8 +62,8 @@ jobs:
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
             mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
-          elif [[ "${{ matrix.rust_target }}" = "x86_64-unknown-linux-gnu" ]]; then
-            mv "target/${{ matrix.rust_target }}/release/swb.d" "$dirname"
+          # elif [[ "${{ matrix.rust_target }}" = "x86_64-unknown-linux-gnu" ]]; then
+          #   mv "target/${{ matrix.rust_target }}/release/swb.d" "$dirname"
           else
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
           fi
