@@ -33,7 +33,7 @@ jobs:
           if [[ "${{ matrix.artifact_name }}" == *.exe ]]; then
             mv target/${{ matrix.rust_target }}/release/swb.exe ${{ matrix.artifact_name }}
           else
-            mv target/${{ matrix.rust_target }}/release/swb ${{ matrix.artifact_name }}
+            mv target/${{ matrix.rust_target }}/release/swb.d ${{ matrix.artifact_name }}
           fi
 
           ls -la target/
