@@ -17,8 +17,6 @@ jobs:
             artifact_name: binary-bin-linux-amd64
           - rust_target: x86_64-pc-windows-gnu
             artifact_name: binary-bin-windows-amd64.exe
-          - rust_target: aarch64-apple-darwin
-            artifact_name: binary-bin-apple-silicon
 
     steps:
       - name: checkout code
@@ -38,9 +36,9 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.rust_target }}
           if [[ "${{ matrix.artifact_name }}" == *.exe ]]; then
-            mv target/${{ matrix.rust_target }}/release/binary.exe ${{ matrix.artifact_name }}
+            mv target/${{ matrix.rust_target }}/release/swb.exe ${{ matrix.artifact_name }}
           else
-            mv target/${{ matrix.rust_target }}/release/binary ${{ matrix.artifact_name }}
+            mv target/${{ matrix.rust_target }}/release/swb ${{ matrix.artifact_name }}
           fi
 
       - name: determine tag type
