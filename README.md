@@ -21,3 +21,11 @@ Make sure to download the correct file for your operating system:
 - Unzip the downloaded archive and run the `swb.exe` or `swb` file inside. This may have to be done from the command line, and will open a terminal window regardless.
 - To exit, use Ctrl + C. Make sure the terminal window is focused.
 - For additional options, run with the `--help` flag: `swb --help`.
+
+## Troubleshooting
+
+If you are on Mac and get a message like `"swb" was not opened"`:
+- Open Settings
+- Go to Privacy & Security
+- Scroll down to the Security section
+- Find `"swb" was blocked to protect your Mac.`, and click the `Open Anyways` button. You will have to confirm, and give your password.
