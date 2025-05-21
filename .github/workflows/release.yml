@@ -12,16 +12,21 @@ permissions:
 jobs:
   build:
     name: build
-    runs-on: ubuntu-latest
+    # runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - rust_target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact_name: binary-bin-linux-amd64-gnu
           # - rust_target: x86_64-unknown-linux-musl
           #   os: ubuntu-latest
-          #   artifact_name: binary-bin-linux-amd64-musl
+          # - rust_target: x86_64-pc-windows-gnu
+          #   os: windows-latest
+          - rust_target: aarch64-apple-darwin
+            os: macos-latest
+          - rust_target: x86_64-apple-darwin
+            os: macos-latest
 
     steps:
       - name: checkout code
@@ -33,21 +38,17 @@ jobs:
           toolchain: stable
           target: ${{ matrix.rust_target }}
 
-      - name: Install mingw for Windows cross-compilation
-        if: matrix.rust_target == 'x86_64-pc-windows-gnu'
-        run: sudo apt-get install -y gcc-mingw-w64-x86-64
+      # - name: Install mingw for Windows cross-compilation
+      #   if: matrix.rust_target == 'x86_64-pc-windows-gnu'
+      #   run: sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Build the binary
         run: |
-          cargo build --verbose --release --target ${{ matrix.rust_target }}
-          if [[ "${{ matrix.artifact_name }}" == *.exe ]]; then
-            mv target/${{ matrix.rust_target }}/release/swb.exe ${{ matrix.artifact_name }}
-          else
-            mv target/${{ matrix.rust_target }}/release/swb.d ${{ matrix.artifact_name }}
-          fi
-
-          ls -la target/
-          ls -la target/${{ matrix.rust_target }}/release
+          cargo build --release --target ${{ matrix.rust_target }}
 
       - name: Build archive
         shell: bash
@@ -56,10 +57,12 @@ jobs:
 
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.rust_target }}"
           mkdir "$dirname"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            mv "target/${{ matrix.rust_target }}/release/$binary_name.exe" "$dirname"
+          if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
+            mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
+          elif [[ "${{ matrix.rust_target }}" = "x86_64-unknown-linux-gnu" ]]
+            mv "target/${{ matrix.rust_target }}/release/swb.d" "$dirname"
           else
-            mv "target/${{ matrix.rust_target }}/release/$binary_name" "$dirname"
+            mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -70,7 +73,7 @@ jobs:
             echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
           fi
 
-      - name: determine tag type
+      - name: Determine tag type
         id: tag_type
         run: |
           if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
