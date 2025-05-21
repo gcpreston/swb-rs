@@ -1,10 +1,6 @@
 name: release
 
-on:
-  push:
-    tags:
-    - v[0-9].[0-9]+.[0-9]+
-    - v[0-9].[0-9]+.[0-9]+-rc[0-9]+
+on: push
 
 jobs:
   build:
@@ -39,6 +35,9 @@ jobs:
           else
             mv target/${{ matrix.rust_target }}/release/swb ${{ matrix.artifact_name }}
           fi
+
+          ls -la target/
+          ls -la target/${{ matrix.rust_target }}/release
 
       - name: Build archive
         shell: bash
