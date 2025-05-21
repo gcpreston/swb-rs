@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - v[0-9]+\.[0-9]+\.[0-9]+
-      - v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+
+      - v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+
 
 permissions:
   contents: write
@@ -59,7 +59,7 @@ jobs:
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
             mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
-          elif [[ "${{ matrix.rust_target }}" = "x86_64-unknown-linux-gnu" ]]
+          elif [[ "${{ matrix.rust_target }}" = "x86_64-unknown-linux-gnu" ]]; then
             mv "target/${{ matrix.rust_target }}/release/swb.d" "$dirname"
           else
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
@@ -76,7 +76,7 @@ jobs:
       - name: Determine tag type
         id: tag_type
         run: |
-          if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
+          if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
           elif [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "tag_type=RELEASE_TAG" >> $GITHUB_OUTPUT
