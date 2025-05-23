@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ezsockets::{Bytes, ClientConfig};
+use ezsockets::{Bytes, ClientConfig, SocketConfig};
 use ezsockets::{Error, SendError};
 use futures::{
     Sink,
@@ -7,11 +7,12 @@ use futures::{
 };
 use serde::Deserialize;
 use std::pin::Pin;
+use std::time::Duration;
 use thiserror::Error;
 use url::Url;
 
 #[derive(Error, Debug)]
-pub enum ConnectError {
+pub enum WSError {
     #[error("Send error: {0}")]
     SendError(#[from] SendError<Call>),
 
@@ -64,7 +65,7 @@ impl ezsockets::ClientExt for MyClient {
 }
 
 impl Sink<Bytes> for SpectatorModeClient {
-    type Error = ConnectError;
+    type Error = WSError;
 
     fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -87,7 +88,9 @@ impl Sink<Bytes> for SpectatorModeClient {
 
 pub async fn initiate_connection(address: &str) -> SpectatorModeClient {
     let url = Url::parse(address).unwrap();
-    let config = ClientConfig::new(url);
+    let mut socket_config = SocketConfig::default();
+    socket_config.timeout = Duration::from_secs(15);
+    let config = ClientConfig::new(url).socket_config(socket_config);
     let (sm_handle, _future) = ezsockets::connect(|handle| MyClient { handle }, config).await;
 
     SpectatorModeClient {
