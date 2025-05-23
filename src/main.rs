@@ -7,6 +7,7 @@ use futures::{SinkExt, StreamExt, channel::mpsc::channel};
 use futures_util::pin_mut;
 use rusty_enet as enet;
 use tracing::Level;
+use self_update::cargo_crate_version;
 
 mod dolphin_connection;
 mod spectator_mode_client;
@@ -24,8 +25,39 @@ struct Args {
     verbose: bool
 }
 
-#[tokio::main]
-async fn main() {
+fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
+    let status = self_update::backends::github::Update::configure()
+        .repo_owner("gcpreston")
+        .repo_name("swb-rs")
+        .bin_name("swb")
+        .bin_path_in_archive("{{ bin }}-v{{ version }}-{{ target }}/{{ bin }}")
+        .show_download_progress(true)
+        .current_version(cargo_crate_version!())
+        .build()?
+        .update()?;
+
+    println!("Update status: `{}`!", status.version());
+    Ok(status)
+}
+
+fn main() {
+    let update_status = update_if_needed().unwrap();
+
+    if update_status.updated() {
+        println!("\nUpdate complete, please relaunch swb.")
+    } else {
+        // equivalent to #[tokio::main]
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio_main().await;
+            })
+    }
+}
+
+async fn tokio_main() {
     let args = Args::parse();
 
     if args.verbose {
@@ -83,5 +115,6 @@ async fn main() {
         .forward(&mut sm_client);
 
     dolphin_to_sm.await.unwrap();
+    sm_client.close().await.unwrap();
     tracing::info!("Disconnected from SpectatorMode.");
 }
