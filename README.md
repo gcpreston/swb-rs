@@ -4,23 +4,23 @@ Stream Slippi data to ssbm.tv.
 
 ## Download
 
-[The latest release can be found here](https://github.com/gcpreston/swb-rs/releases/latest). The Releases page has all historical releases and pre-releases.
+[The latest release can be found here](https://github.com/gcpreston/swb-rs/releases/latest). The [Releases page](https://github.com/gcpreston/swb-rs/releases) has all historical releases and pre-releases.
 
 Make sure to download the correct file for your operating system:
 
 | OS                      | File                                           |
 | ----------------------- | ---------------------------------------------- |
 | Windows                 | swb-v[version]-x86_64-pc-windows-gnu.zip       |
-| macOS (Apple Silicon)   | swb-v[version]-aarch64-apple-darwin.tar.gz     |
+| macOS (Apple silicon)   | swb-v[version]-aarch64-apple-darwin.tar.gz     |
 | macOS (Intel processor) | swb-v[version]-x86_64-apple-darwin.tar.gz      |
 | Linux                   | swb-v[version]-x86_64-unknown-linux-gnu.tar.gz |
 
 ## Usage
 
 - Open Slippi.
-- Unzip the downloaded archive and run the `swb.exe` or `swb` file inside. This may have to be done from the command line, and will open a terminal window regardless.
+- Unzip the downloaded archive and run the `swb.exe` or `swb` file inside.
 - To exit, use Ctrl + C. Make sure the terminal window is focused.
-- For additional options, run with the `--help` flag: `swb --help`.
+- For additional options, run with the `--help` flag (via command line): `swb --help`.
 
 ## Troubleshooting
 
