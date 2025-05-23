@@ -17,5 +17,5 @@ ezsockets = { git = "https://github.com/gcpreston/ezsockets.git", branch = "swb-
 url = "2.5.4"
 async-trait = "0.1.88"
 tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = {version = "0.3.19", features = ["env-filter"] }
 ctrlc = "3.4.7"

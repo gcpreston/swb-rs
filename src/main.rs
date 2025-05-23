@@ -6,6 +6,7 @@ use ezsockets::Bytes;
 use futures::{SinkExt, StreamExt, channel::mpsc::channel};
 use futures_util::pin_mut;
 use rusty_enet as enet;
+use tracing::Level;
 
 mod dolphin_connection;
 mod spectator_mode_client;
@@ -18,12 +19,21 @@ struct Args {
 
     #[arg(short, long, default_value = "127.0.0.1:51441")]
     source: String,
+
+    #[arg(short, long, action)]
+    verbose: bool
 }
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
     let args = Args::parse();
+
+    if args.verbose {
+        tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter("swb=info").init();
+    };
+
     println!("[CTRL + C to quit]\n");
 
     let (mut sender, receiver) = channel::<enet::PeerID>(100);
@@ -31,6 +41,7 @@ async fn main() {
 
     let conn = dolphin_connection::DolphinConnection::new(receiver);
     let address = SocketAddr::from_str(&args.source).expect("Invalid socket address");
+    tracing::info!("Connecting to Slippi...");
     let peer_id = conn.initiate_connection(address);
     conn.wait_for_connected().await;
     tracing::info!("Connected to Slippi.");
@@ -59,6 +70,7 @@ async fn main() {
             match e {
                 ConnectionEvent::StartGame => tracing::info!("Received game start event."),
                 ConnectionEvent::EndGame => tracing::info!("Received game end event."),
+                ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
                 _ => (),
             };
 
@@ -71,6 +83,5 @@ async fn main() {
         .forward(&mut sm_client);
 
     dolphin_to_sm.await.unwrap();
-    sm_client.close().await.unwrap();
-    tracing::info!("Disconnected.");
+    tracing::info!("Disconnected from SpectatorMode.");
 }
