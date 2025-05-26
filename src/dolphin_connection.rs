@@ -7,7 +7,6 @@ use std::{
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
-    StreamExt,
     channel::mpsc::Receiver,
     future,
     stream::{self, Stream},
@@ -90,20 +89,6 @@ impl DolphinConnection {
     }
 
     pub fn event_stream(&self) -> impl Stream<Item = Vec<ConnectionEvent>> {
-        self.catch_up_stream().chain(self.live_stream())
-    }
-
-    fn catch_up_stream(&self) -> impl Stream<Item = Vec<ConnectionEvent>> {
-        let mut events: Vec<ConnectionEvent> = Vec::new();
-
-        while let Some(event) = self.service().unwrap() {
-            events.push(event);
-        }
-
-        stream::once(async { events })
-    }
-
-    fn live_stream(&self) -> impl Stream<Item = Vec<ConnectionEvent>> {
         // Poll Dolphin connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
         let mut dcd = false;
@@ -115,22 +100,36 @@ impl DolphinConnection {
                 let p = i.poll_tick(cx);
                 match p {
                     Poll::Pending => Poll::Pending,
-                    Poll::Ready(_) => match self.service() {
-                        Result::Err(_e) => Poll::Ready(None),
-                        Result::Ok(None) => {
-                            cx.waker().clone().wake();
-                            Poll::Pending
+                    Poll::Ready(_) => {
+                        match self.full_service() {
+                            Result::Err(_e) => Poll::Ready(None),
+                            Result::Ok(events) => {
+                                if let Some(ConnectionEvent::Disconnect) = events.last() {
+                                    dcd = true;
+                                }
+
+                                cx.waker().clone().wake();
+                                Poll::Ready(Some(events))
+                            }
                         }
-                        Result::Ok(Some(ConnectionEvent::Disconnect)) => {
-                            dcd = true;
-                            Poll::Ready(Some(Vec::from([ConnectionEvent::Disconnect])))
-                        }
-                        // Naive approach
-                        Result::Ok(Some(event)) => Poll::Ready(Some(Vec::from([event]))),
-                    },
+                    }
                 }
             }
         })
+    }
+
+    // Run service until there is no ready value.
+    fn full_service(&self) -> Result<Vec<ConnectionEvent>, &'static str> {
+        let mut events: Vec<ConnectionEvent> = Vec::new();
+
+        loop {
+            match self.service()? {
+                None => break,
+                Some(event) => events.push(event)
+            }
+        }
+
+        Ok(events)
     }
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
