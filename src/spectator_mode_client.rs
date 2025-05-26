@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use ezsockets::client::ClientCloseMode;
 use ezsockets::{Bytes, ClientConfig, SocketConfig};
 use ezsockets::{Error, SendError};
 use futures::{
@@ -62,6 +63,11 @@ impl ezsockets::ClientExt for MyClient {
         };
         Ok(())
     }
+
+    async fn on_disconnect(&mut self) -> Result<ClientCloseMode, Error> {
+        tracing::info!("Reconnecting to SpectatorMode...");
+        Ok(ClientCloseMode::Reconnect)
+    }
 }
 
 impl Sink<Bytes> for SpectatorModeClient {
@@ -86,14 +92,12 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn initiate_connection(address: &str) -> SpectatorModeClient {
+pub async fn initiate_connection(address: &str) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>) {
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
     socket_config.timeout = Duration::from_secs(15);
-    let config = ClientConfig::new(url).socket_config(socket_config);
-    let (sm_handle, _future) = ezsockets::connect(|handle| MyClient { handle }, config).await;
+    let config = ClientConfig::new(url).socket_config(socket_config).max_reconnect_attempts(3);
+    let (sm_handle, future) = ezsockets::connect(|handle| MyClient { handle }, config).await;
 
-    SpectatorModeClient {
-        ws_client: sm_handle,
-    }
+    (SpectatorModeClient { ws_client: sm_handle }, future)
 }

@@ -1,11 +1,12 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{error::Error, net::SocketAddr, str::FromStr};
 
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
 use ezsockets::Bytes;
 use futures::{SinkExt, StreamExt, channel::mpsc::channel};
-use futures_util::pin_mut;
+use futures_util::{future, pin_mut};
 use rusty_enet as enet;
+use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
 
@@ -40,8 +41,8 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
     Ok(status)
 }
 
-fn main() {
-    let update_status = update_if_needed().unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let update_status = update_if_needed()?;
 
     if update_status.updated() {
         println!("\nUpdate complete, please relaunch swb.")
@@ -55,6 +56,8 @@ fn main() {
                 tokio_main().await;
             })
     }
+
+    Ok(())
 }
 
 async fn tokio_main() {
@@ -89,7 +92,8 @@ async fn tokio_main() {
     })
     .unwrap();
 
-    let sm_client = spectator_mode_client::initiate_connection(&args.dest).await;
+    tracing::info!("Connecting to SpectatorMode...");
+    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(&args.dest).await;
 
     pin_mut!(sm_client);
 
@@ -114,7 +118,31 @@ async fn tokio_main() {
         })
         .forward(&mut sm_client);
 
-    dolphin_to_sm.await.unwrap();
-    sm_client.close().await.unwrap();
+    pin_mut!(dolphin_to_sm, sm_client_future);
+
+    match future::select(dolphin_to_sm, sm_client_future).await {
+        future::Either::Left((forward_result, _p)) => {
+            log_forward_result(forward_result);
+            sm_client.close().await.unwrap();
+        },
+        future::Either::Right((sm_client_result, _p)) => {
+            log_sm_client_result(sm_client_result);
+        }
+    }
+
     tracing::info!("Disconnected from SpectatorMode.");
+}
+
+fn log_forward_result(result: Result<(), WSError>) {
+    match result {
+        Ok(_) => tracing::debug!("Slippi stream finished successfully"),
+        Err(e) => tracing::debug!("Slippi stream finished with error: {e:?}")
+    }
+}
+
+fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
+    match result {
+        Ok(_) => tracing::debug!("SpectatorMode connection "),
+        Err(e) => tracing::debug!("Slippi stream finished with error: {e:?}")
+    }
 }
