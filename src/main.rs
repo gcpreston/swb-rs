@@ -99,21 +99,31 @@ async fn tokio_main() {
 
     let dolphin_to_sm = conn
         .event_stream()
-        .filter_map(async |e| {
-            // Side-effects (logs)
-            // ConnectionEvent::Connected will not reach the stream because
-            // it is awaited before initiating the SpectatorMode connection.
-            match e {
-                ConnectionEvent::StartGame => tracing::info!("Received game start event."),
-                ConnectionEvent::EndGame => tracing::info!("Received game end event."),
-                ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
-                _ => (),
-            };
+        .filter_map(async |es| {
+            let mut data: Vec<Vec<u8>> = Vec::new();
+
+            let _: Vec<()> =
+                es.into_iter().map(|e| {
+                    // Side-effects
+                    // ConnectionEvent::Connected will not reach the stream because
+                    // it is awaited before initiating the SpectatorMode connection.
+                    match e {
+                        ConnectionEvent::StartGame => tracing::info!("Received game start event."),
+                        ConnectionEvent::EndGame => tracing::info!("Received game end event."),
+                        ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
+                        ConnectionEvent::Message { payload } => {
+                            data.push(payload);
+                        },
+                        _ => ()
+                    };
+                }).collect();
 
             // Return
-            match e {
-                ConnectionEvent::Message { payload } => Some(Ok(Bytes::from(payload))),
-                _ => None,
+            if data.len() > 0 {
+                let b = Bytes::from(data.into_iter().flatten().collect::<Vec<u8>>());
+                Some(Ok(b))
+            } else {
+                None
             }
         })
         .forward(&mut sm_client);
