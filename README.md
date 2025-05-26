@@ -24,7 +24,7 @@ Make sure to download the correct file for your operating system:
 
 ## Troubleshooting
 
-If you are on Mac and get a message like `"swb" was not opened"`:
+If you are on Mac and get a message like `"swb" was not opened`:
 - Open Settings
 - Go to Privacy & Security
 - Scroll down to the Security section
