@@ -29,3 +29,9 @@ If you are on Mac and get a message like `"swb" was not opened`:
 - Go to Privacy & Security
 - Scroll down to the Security section
 - Find `"swb" was blocked to protect your Mac.`, and click the `Open Anyways` button. You will have to confirm, and give your password.
+
+## Supported options
+
+* `--dest`: Specify the WebSocket URL to connect to. Used for connecting to an alternative instance of SpectatorMode, for example for local development: `ws://localhost:4000/bridge_socket/websocket`
+* `--source`: Specify the address and port of the Slippi stream. Defaults to `127.0.0.1:51441`.
+* `--verbose`: Print more logs. Useful for debugging.
