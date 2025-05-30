@@ -1,6 +1,6 @@
 # swb
 
-Stream Slippi data to ssbm.tv.
+Stream Slippi data to SpectatorMode.
 
 ## Download
 

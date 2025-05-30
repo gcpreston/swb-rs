@@ -16,7 +16,7 @@ mod spectator_mode_client;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, default_value = "wss://ssbm.tv/bridge_socket/websocket")]
+    #[arg(short, long, default_value = "wss://spectatormode.tv/bridge_socket/websocket")]
     dest: String,
 
     #[arg(short, long, default_value = "127.0.0.1:51441")]
@@ -133,7 +133,8 @@ async fn tokio_main() {
     match future::select(dolphin_to_sm, sm_client_future).await {
         future::Either::Left((forward_result, _p)) => {
             log_forward_result(forward_result);
-            sm_client.close().await.unwrap();
+            let close_ret = sm_client.close().await;
+            println!("got from close {close_ret:?}");
         },
         future::Either::Right((sm_client_result, _p)) => {
             log_sm_client_result(sm_client_result);
