@@ -93,6 +93,7 @@ impl Sink<Bytes> for SpectatorModeClient {
 }
 
 pub async fn initiate_connection(address: &str) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>) {
+    tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
     socket_config.timeout = Duration::from_secs(15);
