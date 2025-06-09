@@ -130,16 +130,10 @@ async fn tokio_main() {
 
     pin_mut!(dolphin_to_sm, sm_client_future);
 
-    match future::select(dolphin_to_sm, sm_client_future).await {
-        future::Either::Left((forward_result, _p)) => {
-            log_forward_result(forward_result);
-            let close_ret = sm_client.close().await;
-            println!("got from close {close_ret:?}");
-        },
-        future::Either::Right((sm_client_result, _p)) => {
-            log_sm_client_result(sm_client_result);
-        }
-    }
+    let (forward_result, sm_client_result) = future::join(dolphin_to_sm, sm_client_future).await;
+
+    log_forward_result(forward_result);
+    log_sm_client_result(sm_client_result);
 
     tracing::info!("Disconnected from SpectatorMode.");
 }
@@ -153,7 +147,7 @@ fn log_forward_result(result: Result<(), WSError>) {
 
 fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
     match result {
-        Ok(_) => tracing::debug!("SpectatorMode connection "),
+        Ok(_) => tracing::debug!("SpectatorMode connection finished successfully"),
         Err(e) => tracing::debug!("Slippi stream finished with error: {e:?}")
     }
 }

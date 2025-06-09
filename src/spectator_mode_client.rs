@@ -87,6 +87,7 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 
     fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        tracing::debug!("in poll_close");
         // self.ws_client.text("quit")?;
         self.ws_client.close(Some(CloseFrame {
             code: CloseCode::Normal,
