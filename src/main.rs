@@ -3,7 +3,7 @@ use std::{error::Error, net::SocketAddr, str::FromStr};
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
 use ezsockets::Bytes;
-use futures::{SinkExt, StreamExt, channel::mpsc::channel};
+use futures::{StreamExt, channel::mpsc::channel};
 use futures_util::{future, pin_mut};
 use rusty_enet as enet;
 use spectator_mode_client::WSError;

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use ezsockets::client::ClientCloseMode;
-use ezsockets::{Bytes, ClientConfig, CloseFrame, CloseCode, SocketConfig};
+use ezsockets::{Bytes, ClientConfig, SocketConfig};
 use ezsockets::{Error, SendError};
 use futures::{
     Sink,
@@ -87,12 +87,7 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 
     fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        tracing::debug!("in poll_close");
-        // self.ws_client.text("quit")?;
-        self.ws_client.close(Some(CloseFrame {
-            code: CloseCode::Normal,
-            reason: "adios!".into(),
-        }))?;
+        self.ws_client.close(None)?;
         Poll::Ready(Ok(()))
     }
 }
