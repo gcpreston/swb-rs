@@ -35,3 +35,4 @@ If you are on Mac and get a message like `"swb" was not opened`:
 * `--dest`: Specify the WebSocket URL to connect to. Used for connecting to an alternative instance of SpectatorMode, for example for local development: `ws://localhost:4000/bridge_socket/websocket`
 * `--source`: Specify the address and port of the Slippi stream. Defaults to `127.0.0.1:51441`.
 * `--verbose`: Print more logs. Useful for debugging.
+* `--skip-update`: Don't attempt to self-update. Useful for local development when not connected to the internet.

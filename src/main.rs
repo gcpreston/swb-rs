@@ -17,6 +17,9 @@ mod spectator_mode_client;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
+    #[arg(long)]
+    skip_update: bool,
+
     #[arg(short, long, default_value = "wss://spectatormode.tv/bridge_socket/websocket")]
     dest: String,
 
@@ -43,20 +46,25 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let update_status = update_if_needed()?;
+    let args = Args::parse();
 
-    if update_status.updated() {
-        println!("\nUpdate complete, please relaunch swb.")
-    } else {
-        // equivalent to #[tokio::main]
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio_main().await;
-            })
+    if !args.skip_update {
+        let update_status = update_if_needed()?;
+
+        if update_status.updated() {
+            println!("\nUpdate complete, please relaunch swb.");
+            return Ok(());
+        }
     }
+
+    // equivalent to #[tokio::main]
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio_main(args).await;
+        });
 
     Ok(())
 }
@@ -77,7 +85,7 @@ async fn connect_to_slippi(source_addr: String) -> DolphinConnection {
             std::process::exit(2);
         } else {
             already_interrupted = true;
-            tracing::info!("Disconnecting...");
+            tracing::info!("Disconnecting from Slippi...");
             sender.try_send(peer_id).unwrap();
         }
     })
@@ -120,9 +128,7 @@ fn forward_slippi_data(slippi_conn: &DolphinConnection, sm_client: SpectatorMode
         .forward(sm_client)
 }
 
-async fn tokio_main() {
-    let args = Args::parse();
-
+async fn tokio_main(args: Args) {
     if args.verbose {
         tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
     } else {
@@ -139,10 +145,13 @@ async fn tokio_main() {
     // Do forwarding work and wait for eventual close
     let forward_result = dolphin_to_sm.await;
     log_forward_result(forward_result);
+
+    tracing::info!("Disconnecting from SpectatorMode...");
     let sm_client_result = sm_client_future.await;
     log_sm_client_result(sm_client_result);
-
     tracing::info!("Disconnected from SpectatorMode.");
+
+    println!("\nGoodbye!");
 }
 
 fn log_forward_result(result: Result<(), WSError>) {
