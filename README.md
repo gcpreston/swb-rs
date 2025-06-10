@@ -22,6 +22,15 @@ Make sure to download the correct file for your operating system:
 - To exit, use Ctrl + C. Make sure the terminal window is focused.
 - For additional options, run with the `--help` flag (via command line): `swb --help`.
 
+## Local development
+
+To run the program from source, simply [install Rust](https://www.rust-lang.org/tools/install), then clone and
+
+```bash
+$ cd swb-rs
+$ cargo run
+```
+
 ## Troubleshooting
 
 If you are on Mac and get a message like `"swb" was not opened`:
@@ -29,6 +38,8 @@ If you are on Mac and get a message like `"swb" was not opened`:
 - Go to Privacy & Security
 - Scroll down to the Security section
 - Find `"swb" was blocked to protect your Mac.`, and click the `Open Anyways` button. You will have to confirm, and give your password.
+
+To go further, if you are on any platform and run into security blockers, either create an exception in the relevant software, or [run the program from source](https://github.com/gcpreston/swb-rs?tab=readme-ov-file#local-development).
 
 ## Supported options
 
