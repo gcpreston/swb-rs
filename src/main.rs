@@ -3,12 +3,13 @@ use std::{error::Error, net::SocketAddr, str::FromStr};
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
 use ezsockets::Bytes;
-use futures::{SinkExt, StreamExt, channel::mpsc::channel};
-use futures_util::{future, pin_mut};
+use futures::{channel::mpsc::channel, StreamExt};
 use rusty_enet as enet;
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
+
+use crate::{dolphin_connection::DolphinConnection, spectator_mode_client::SpectatorModeClient};
 
 mod dolphin_connection;
 mod spectator_mode_client;
@@ -60,22 +61,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn tokio_main() {
-    let args = Args::parse();
-
-    if args.verbose {
-        tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
-    } else {
-        tracing_subscriber::fmt().with_env_filter("swb=info").init();
-    };
-
-    println!("[CTRL + C to quit]\n");
-
+async fn connect_to_slippi(source_addr: String) -> DolphinConnection {
     let (mut sender, receiver) = channel::<enet::PeerID>(100);
     let mut already_interrupted = false;
 
     let conn = dolphin_connection::DolphinConnection::new(receiver);
-    let address = SocketAddr::from_str(&args.source).expect("Invalid socket address");
+    let address = SocketAddr::from_str(source_addr.as_str()).expect("Invalid socket address");
     tracing::info!("Connecting to Slippi...");
     let peer_id = conn.initiate_connection(address);
     conn.wait_for_connected().await;
@@ -92,12 +83,12 @@ async fn tokio_main() {
     })
     .unwrap();
 
-    tracing::info!("Connecting to SpectatorMode...");
-    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(&args.dest).await;
+    conn
+}
 
-    pin_mut!(sm_client);
 
-    let dolphin_to_sm = conn
+fn forward_slippi_data(slippi_conn: &DolphinConnection, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
+    slippi_conn
         .event_stream()
         .filter_map(async |es| {
             let mut data: Vec<Vec<u8>> = Vec::new();
@@ -126,20 +117,30 @@ async fn tokio_main() {
                 None
             }
         })
-        .forward(&mut sm_client);
+        .forward(sm_client)
+}
 
-    pin_mut!(dolphin_to_sm, sm_client_future);
+async fn tokio_main() {
+    let args = Args::parse();
 
-    match future::select(dolphin_to_sm, sm_client_future).await {
-        future::Either::Left((forward_result, _p)) => {
-            log_forward_result(forward_result);
-            let close_ret = sm_client.close().await;
-            println!("got from close {close_ret:?}");
-        },
-        future::Either::Right((sm_client_result, _p)) => {
-            log_sm_client_result(sm_client_result);
-        }
-    }
+    if args.verbose {
+        tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter("swb=info").init();
+    };
+
+    println!("[CTRL + C to quit]\n");
+
+    // Connection and forwarding setup
+    let slippi_conn = connect_to_slippi(args.source).await;
+    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(&args.dest).await;
+    let dolphin_to_sm = forward_slippi_data(&slippi_conn, sm_client);
+
+    // Do forwarding work and wait for eventual close
+    let forward_result = dolphin_to_sm.await;
+    log_forward_result(forward_result);
+    let sm_client_result = sm_client_future.await;
+    log_sm_client_result(sm_client_result);
 
     tracing::info!("Disconnected from SpectatorMode.");
 }
@@ -153,7 +154,7 @@ fn log_forward_result(result: Result<(), WSError>) {
 
 fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
     match result {
-        Ok(_) => tracing::debug!("SpectatorMode connection "),
-        Err(e) => tracing::debug!("Slippi stream finished with error: {e:?}")
+        Ok(_) => tracing::debug!("SpectatorMode connection finished successfully"),
+        Err(e) => tracing::debug!("SpectatorMode connection finished with error: {e:?}")
     }
 }
