@@ -3,7 +3,7 @@ use std::{error::Error, net::SocketAddr, str::FromStr};
 use clap::Parser;
 use dolphin_connection::ConnectionEvent;
 use ezsockets::Bytes;
-use futures::{channel::mpsc::channel, StreamExt};
+use futures::{channel::mpsc::channel, future, StreamExt};
 use rusty_enet as enet;
 use spectator_mode_client::WSError;
 use tracing::Level;
@@ -57,41 +57,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // equivalent to #[tokio::main]
+    if args.verbose {
+        tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter("swb=info").init();
+    };
+
+    println!("[CTRL + C to quit]\n");
+
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
         .block_on(async {
-            tokio_main(args).await;
+            connect_and_forward_packets_until_completion(args.source.as_str(), args.dest.as_str()).await;
         });
+
+    println!("\nGoodbye!");
 
     Ok(())
 }
 
-async fn connect_to_slippi(source_addr: String) -> DolphinConnection {
+async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) {
+    // Initiate connections.
+    let (slippi_conn, mut slippi_interrupt) = connect_to_slippi(source).await;
+    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(dest).await;
+
+    // Set up the futures to await.
+    // Each individual future will attempt to gracefully disconnect the other.
+    let dolphin_to_sm = forward_slippi_data(&slippi_conn, sm_client);
+    let extended_sm_client_future = async {
+        let result = sm_client_future.await;
+        slippi_interrupt();
+        result
+    };
+
+    // Run until both futures complete.
+    let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, extended_sm_client_future).await;
+
+    log_forward_result(slippi_to_sm_result);
+    log_sm_client_result(sm_client_result);
+}
+
+async fn connect_to_slippi(source_addr: &str) -> (DolphinConnection, impl FnMut() -> ()) {
     let (mut sender, receiver) = channel::<enet::PeerID>(100);
+    let mut other_sender = sender.clone();
+
     let mut already_interrupted = false;
 
     let conn = dolphin_connection::DolphinConnection::new(receiver);
-    let address = SocketAddr::from_str(source_addr.as_str()).expect("Invalid socket address");
+    let address = SocketAddr::from_str(source_addr).expect("Invalid socket address");
     tracing::info!("Connecting to Slippi...");
     let peer_id = conn.initiate_connection(address);
     conn.wait_for_connected().await;
     tracing::info!("Connected to Slippi.");
+
+    let interruptor_to_return = move || {
+        other_sender.try_send(peer_id).unwrap();
+    };
 
     ctrlc::set_handler(move || {
         if already_interrupted {
             std::process::exit(2);
         } else {
             already_interrupted = true;
-            tracing::info!("Disconnecting from Slippi...");
             sender.try_send(peer_id).unwrap();
         }
     })
     .unwrap();
 
-    conn
+    (conn, interruptor_to_return)
 }
 
 
@@ -128,32 +163,6 @@ fn forward_slippi_data(slippi_conn: &DolphinConnection, sm_client: SpectatorMode
         .forward(sm_client)
 }
 
-async fn tokio_main(args: Args) {
-    if args.verbose {
-        tracing_subscriber::fmt().with_max_level(Level::DEBUG).init();
-    } else {
-        tracing_subscriber::fmt().with_env_filter("swb=info").init();
-    };
-
-    println!("[CTRL + C to quit]\n");
-
-    // Connection and forwarding setup
-    let slippi_conn = connect_to_slippi(args.source).await;
-    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(&args.dest).await;
-    let dolphin_to_sm = forward_slippi_data(&slippi_conn, sm_client);
-
-    // Do forwarding work and wait for eventual close
-    let forward_result = dolphin_to_sm.await;
-    log_forward_result(forward_result);
-
-    tracing::info!("Disconnecting from SpectatorMode...");
-    let sm_client_result = sm_client_future.await;
-    log_sm_client_result(sm_client_result);
-    tracing::info!("Disconnected from SpectatorMode.");
-
-    println!("\nGoodbye!");
-}
-
 fn log_forward_result(result: Result<(), WSError>) {
     match result {
         Ok(_) => tracing::debug!("Slippi stream finished successfully"),
@@ -165,5 +174,6 @@ fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
     match result {
         Ok(_) => tracing::debug!("SpectatorMode connection finished successfully"),
         Err(e) => tracing::debug!("SpectatorMode connection finished with error: {e:?}")
-    }
+    };
+    tracing::info!("Disconnected from SpectatorMode.");
 }

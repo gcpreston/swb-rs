@@ -83,6 +83,7 @@ impl DolphinConnection {
     }
 
     pub fn initiate_disconnect(&self, peer_id: enet::PeerID) {
+        tracing::info!("Disconnecting from Slippi...");
         let mut host = self.host_cell.borrow_mut();
         let peer = host.peer_mut(peer_id);
         peer.disconnect(1337);
