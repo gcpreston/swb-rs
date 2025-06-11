@@ -64,8 +64,13 @@ impl ezsockets::ClientExt for MyClient {
         Ok(())
     }
 
+    // async fn on_close(&mut self, _close_frame: std::option::Option<ezsockets::CloseFrame>) -> Result<ClientCloseMode, Error> {
+    //     Ok(ClientCloseMode::Close)
+    // }
+
     async fn on_disconnect(&mut self) -> Result<ClientCloseMode, Error> {
         tracing::info!("Reconnecting to SpectatorMode...");
+        // Ok(ClientCloseMode::Close)
         Ok(ClientCloseMode::Reconnect)
     }
 }
@@ -87,7 +92,12 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 
     fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.ws_client.close(None)?;
+        tracing::info!("Disconnecting from SpectatorMode...");
+
+        if let Err(SendError(..)) = self.ws_client.close(None) {
+            tracing::debug!("SpectatorMode connection is already closed.");
+        }
+
         Poll::Ready(Ok(()))
     }
 }
