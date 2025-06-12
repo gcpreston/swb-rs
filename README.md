@@ -39,7 +39,7 @@ If you are on Mac and get a message like `"swb" was not opened`:
 - Scroll down to the Security section
 - Find `"swb" was blocked to protect your Mac.`, and click the `Open Anyways` button. You will have to confirm, and give your password.
 
-To go further, if you are on any platform and run into security blockers, either create an exception in the relevant software, or [run the program from source](https://github.com/gcpreston/swb-rs?tab=readme-ov-file#local-development).
+If you are on any platform and the program is blocked by antivirus, either create an exception in the relevant software, or [run the program from source](https://github.com/gcpreston/swb-rs?tab=readme-ov-file#local-development).
 
 ## Supported options
 
