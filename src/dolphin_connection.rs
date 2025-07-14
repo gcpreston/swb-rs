@@ -1,8 +1,5 @@
 use std::{
-    cell::RefCell,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
-    str,
-    time::Duration,
+    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -13,8 +10,8 @@ use futures::{
     task::{Context, Poll},
 };
 use rusty_enet::{self as enet};
-use serde::de::Error;
-use serde_json::{Result as SerdeResult, Value};
+use serde_json::Value;
+use thiserror::Error;
 use tokio::time::interval;
 
 #[derive(Debug)]
@@ -32,6 +29,20 @@ pub struct DolphinConnection {
 }
 
 const MAX_PEERS: usize = 32;
+
+#[derive(Error, Debug)]
+pub enum DolphinConnectionError {
+    #[error("enet host service error")]
+    HostServiceError,
+    #[error("utf8 decode error: {0}")]
+    Utf8Error(#[from] std::str::Utf8Error),
+    #[error("json parse error: {0}")]
+    JsonParseError(#[from] serde_json::Error),
+    #[error("unexpected payload schema: {0}")]
+    PayloadSchemaError(String),
+    #[error("base64 decode error: {0}")]
+    Base64DecodeError(#[from] base64::DecodeError),
+}
 
 impl DolphinConnection {
     pub fn new(interrupt_receiver: Receiver<enet::PeerID>) -> DolphinConnection {
@@ -120,7 +131,7 @@ impl DolphinConnection {
     }
 
     // Run service until there is no ready value.
-    fn full_service(&self) -> Result<Vec<ConnectionEvent>, &'static str> {
+    fn full_service(&self) -> Result<Vec<ConnectionEvent>, DolphinConnectionError> {
         let mut events: Vec<ConnectionEvent> = Vec::new();
 
         loop {
@@ -134,7 +145,7 @@ impl DolphinConnection {
     }
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
-    fn service(&self) -> Result<Option<ConnectionEvent>, &'static str> {
+    fn service(&self) -> Result<Option<ConnectionEvent>, DolphinConnectionError> {
         let mut interrupt_receiver = self.interrupt_cell.borrow_mut();
 
         if let Ok(Some(peer_id)) = interrupt_receiver.try_next() {
@@ -145,7 +156,7 @@ impl DolphinConnection {
         let mut host = self.host_cell.borrow_mut();
 
         match host.service() {
-            Err(_) => Err("host service error"),
+            Err(_) => Err(DolphinConnectionError::HostServiceError),
 
             Ok(None) => Ok(None),
 
@@ -160,41 +171,35 @@ impl DolphinConnection {
                     }
                     enet::Event::Disconnect { .. } => Ok(Some(ConnectionEvent::Disconnect)),
                     enet::Event::Receive { packet, .. } => {
-                        if let Ok(message) = str::from_utf8(packet.data()) {
-                            // println!("Received packet: {:?}", message);
-
-                            // https://stackoverflow.com/questions/65575385/deserialization-of-json-with-serde-by-a-numerical-value-as-type-identifier/65576570#65576570
-
-                            // let connect_reply: ConnectReply = serde_json::from_str(message).expect("Error deserializing JSON");
-                            // Parse the string of data into serde_json::Value.
-                            let v: Value = serde_json::from_str(message).unwrap();
-                            let packet_type_result: SerdeResult<String> = match &v["type"] {
-                                Value::String(s) => Ok(s.to_string()),
-                                _ => Err(Error::custom("something")),
-                            };
-                            let packet_type = packet_type_result.unwrap();
-
-                            match packet_type.as_str() {
-                                "connect_reply" => Ok(Some(ConnectionEvent::Connect)),
-                                "game_event" => {
-                                    if let Value::String(encoded_payload) = &v["payload"] {
-                                        let payload =
-                                            BASE64_STANDARD.decode(encoded_payload).unwrap();
-                                        Ok(Some(ConnectionEvent::Message { payload }))
-                                    } else {
-                                        Err("payload access error")
-                                    }
-                                }
-                                "start_game" => Ok(Some(ConnectionEvent::StartGame)),
-                                "end_game" => Ok(Some(ConnectionEvent::EndGame)),
-                                _ => Err("unexpected packet type"),
-                            }
-                        } else {
-                            Err("failed to decode packet")
-                        }
+                        let message = std::str::from_utf8(packet.data())?;
+                        self.parse_connection_event(message)
                     }
                 }
             }
+        }
+    }
+
+    fn parse_connection_event(&self, message: &str) -> Result<Option<ConnectionEvent>, DolphinConnectionError> {
+        let parse_error: Result<Option<ConnectionEvent>, DolphinConnectionError> = Err(DolphinConnectionError::PayloadSchemaError(message.to_string()));
+        let v: Value = serde_json::from_str(message)?;
+        let packet_type = match &v["type"] {
+            Value::String(s) => s.as_str(),
+            _ => return parse_error
+        };
+
+        match packet_type {
+            "connect_reply" => Ok(Some(ConnectionEvent::Connect)),
+            "game_event" => {
+                if let Value::String(encoded_payload) = &v["payload"] {
+                    let payload = BASE64_STANDARD.decode(encoded_payload)?;
+                    Ok(Some(ConnectionEvent::Message { payload }))
+                } else {
+                   parse_error
+                }
+            }
+            "start_game" => Ok(Some(ConnectionEvent::StartGame)),
+            "end_game" => Ok(Some(ConnectionEvent::EndGame)),
+            _ => parse_error
         }
     }
 }
