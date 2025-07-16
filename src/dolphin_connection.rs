@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, time::Duration
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, str, sync::{Arc, Mutex}, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -24,8 +24,8 @@ pub enum ConnectionEvent {
 }
 
 pub struct DolphinConnection {
-    host_cell: RefCell<enet::Host<UdpSocket>>,
-    interrupt_cell: RefCell<Receiver<enet::PeerID>>,
+    host_cell: Arc<Mutex<enet::Host<UdpSocket>>>,
+    interrupt_cell: Arc<Mutex<Receiver<enet::PeerID>>>,
 }
 
 const MAX_PEERS: usize = 32;
@@ -58,8 +58,8 @@ impl DolphinConnection {
         )
         .unwrap();
 
-        let host_cell = RefCell::new(host);
-        let interrupt_cell = RefCell::new(interrupt_receiver);
+        let host_cell = Arc::new(Mutex::new(host));
+        let interrupt_cell = Arc::new(Mutex::new(interrupt_receiver));
         Self {
             host_cell,
             interrupt_cell,
@@ -67,7 +67,7 @@ impl DolphinConnection {
     }
 
     pub fn initiate_connection(&self, addr: SocketAddr) -> enet::PeerID {
-        let mut host = self.host_cell.borrow_mut();
+        let mut host = self.host_cell.lock().unwrap();
         let peer = host.connect(addr, 3, 1337).unwrap();
         peer.set_ping_interval(100);
         peer.id()
@@ -91,11 +91,12 @@ impl DolphinConnection {
             }
         })
         .await;
+        // TODO: This await could prove piègeant since we forcement have to lock in the .service() call
     }
 
     pub fn initiate_disconnect(&self, peer_id: enet::PeerID) {
         tracing::info!("Disconnecting from Slippi...");
-        let mut host = self.host_cell.borrow_mut();
+        let mut host = self.host_cell.lock().unwrap();
         let peer = host.peer_mut(peer_id);
         peer.disconnect(1337);
     }
@@ -145,15 +146,15 @@ impl DolphinConnection {
     }
 
     // https://github.com/snapview/tokio-tungstenite/blob/a8d9f1983f1f17d7cac9ef946bbac8c1574483e0/examples/client.rs#L32
-    fn service(&self) -> Result<Option<ConnectionEvent>, DolphinConnectionError> {
-        let mut interrupt_receiver = self.interrupt_cell.borrow_mut();
+    pub fn service(&self) -> Result<Option<ConnectionEvent>, DolphinConnectionError> {
+        let mut interrupt_receiver = self.interrupt_cell.lock().unwrap();
 
         if let Ok(Some(peer_id)) = interrupt_receiver.try_next() {
             self.initiate_disconnect(peer_id);
             return Ok(None);
         }
 
-        let mut host = self.host_cell.borrow_mut();
+        let mut host = self.host_cell.lock().unwrap();
 
         match host.service() {
             Err(_) => Err(DolphinConnectionError::HostServiceError),

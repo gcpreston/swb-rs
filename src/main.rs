@@ -6,6 +6,7 @@ use ezsockets::Bytes;
 use futures::{channel::mpsc::channel, future, StreamExt};
 use rusty_enet as enet;
 use spectator_mode_client::WSError;
+use tokio::task::LocalSet;
 use tracing::Level;
 use self_update::cargo_crate_version;
 
@@ -65,18 +66,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[CTRL + C to quit]\n");
 
-    tokio::runtime::Builder::new_current_thread()
+    tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
         .block_on(async {
-            connect_and_forward_packets_until_completion(args.source.as_str(), args.dest.as_str()).await;
+            // It seems that both of these approaches work and have similar performance as far
+            // as I can tell from most basic testing.
+            // The problem is that performance is highly degraded based on the current real version.
+            // This is most likely due to .lock() calls.
+            // The bright side is it's evident that the viewer accurately skips to live when needed, lol.
+
+            // TODO: Do this with a list of sources
+            // tokio::spawn(async move {
+                connect_and_forward_packets_until_completion(args.source.as_str(), args.dest.as_str()).await;
+            // });
+
+            // let s = LocalSet::new();
+            // s.run_until(connect_and_forward_packets_until_completion(args.source.as_str(), args.dest.as_str())).await;
         });
 
     println!("\nGoodbye!");
 
     Ok(())
 }
+
+// IDEA: be able to forward multiple streams to SpectatorMode from one bridge
+//
+// Draft 1, changes required:
+// - swb should be able to act as a server and take arbitrary connections to forward
+//   * sounds like a router to be honest
+// - SpectatorMode should be able to accept multiple streams from a single bridge connection
+//
+// Draft 1, feedback:
+// - This just makes me think of internet routing. What if each client just maintains a TCP
+//   connection to the server, through a series of routers, and sends packets at-will?
+//   * problem: slippi nintendont isn't prepped for TCP in the same way arbitrary machines are
+// - This approach relies on a single process' ability to push lots of data through a single channel.
+//   Chances are this program will be run on a minimally powerful computer, as well (such as an RPi).
+//   * Is this inherently faster or slower than having more TCP connections? I'd guess it relies
+//     on how the OS schedules work
+// - Multiplexing is complicated, maybe an abstraction already exists though
+//
+// Draft 2:
+// - Single swb process, opens and closes TCP connections (websocket) to SpectatorMode at-will.
+// - Each stream has its own connection
+// - Most likely clarifies the state machine of figuring out active streams
+//
+// Draft 2, feedback:
+// - How does the bottleneck work? Does it make a difference if many connections are established
+//   on one machine from the same process vs. from different processes?
+// - This most likely requires making the logic of this program thread-safe, so many copies can
+//   be spawned at-will.
+
+
+// IDEA for mutli-threading
+// - might be able to implement more authoritative interrupts like this
 
 async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) {
     // Initiate connections.
