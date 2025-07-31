@@ -1,10 +1,10 @@
 use tokio_stream::StreamMap;
-use futures::stream::StreamExt;
+use futures::{stream::StreamExt, Stream};
 use ezsockets::Bytes;
 
 use crate::{dolphin_connection::{ConnectionEvent, DolphinConnection}, spectator_mode_client::{SpectatorModeClient, WSError}};
 
-pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
+pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>) -> impl Stream<Item = (i32, Vec<ConnectionEvent>)> {
     let mut map = StreamMap::new();
     let mut k = 0;
 
@@ -15,11 +15,18 @@ pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>, sm_client: Sp
         k += 1;
     }
 
-    map.filter_map(async |(_k, v)| {
+    map
+}
+
+pub fn forward_slippi_data(stream: impl Stream<Item = (i32, Vec<ConnectionEvent>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
+    stream.filter_map(async |(_k, v)| {
         let mut data: Vec<Vec<u8>> = Vec::new();
 
         let _: Vec<()> =
             v.into_iter().map(|e| {
+                // Side-effects
+                // ConnectionEvent::Connected will not reach the stream because
+                // it is awaited before initiating the SpectatorMode connection.
                 match e {
                     ConnectionEvent::StartGame => tracing::info!("Received game start event."),
                     ConnectionEvent::EndGame => tracing::info!("Received game end event."),
@@ -31,6 +38,7 @@ pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>, sm_client: Sp
                 };
             }).collect();
 
+        // Return
         if data.len() > 0 {
             let b = Bytes::from(data.into_iter().flatten().collect::<Vec<u8>>());
             Some(Ok(b))
