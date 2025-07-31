@@ -4,7 +4,7 @@ use ezsockets::Bytes;
 
 use crate::{dolphin_connection::{ConnectionEvent, DolphinConnection}, spectator_mode_client::{SpectatorModeClient, WSError}};
 
-pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>) -> impl Stream<Item = (i32, Vec<ConnectionEvent>)> {
+pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>) -> impl Stream<Item = (u32, Vec<ConnectionEvent>)> {
     let mut map = StreamMap::new();
     let mut k = 0;
 
@@ -18,8 +18,24 @@ pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>) -> impl Strea
     map
 }
 
-pub fn forward_slippi_data(stream: impl Stream<Item = (i32, Vec<ConnectionEvent>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
-    stream.filter_map(async |(_k, v)| {
+/* Packet spec
+ * +------------------------------+
+ * | stream ID (32 bits, 4 bytes) |
+ * +------------------------------+
+ * | data size (4 bytes)          |
+ * +------------------------------+
+ * | Data...
+ * +------------------------------+
+ *
+ * Header size: 8 bytes
+ * Size addition for different average data sizes:
+ * - 8 bytes: +100%
+ * - 80 bytes: +10%
+ * - 800 bytes: +1%
+ */
+
+pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<ConnectionEvent>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
+    stream.filter_map(async |(k, v)| {
         let mut data: Vec<Vec<u8>> = Vec::new();
 
         let _: Vec<()> =
@@ -40,10 +56,26 @@ pub fn forward_slippi_data(stream: impl Stream<Item = (i32, Vec<ConnectionEvent>
 
         // Return
         if data.len() > 0 {
-            let b = Bytes::from(data.into_iter().flatten().collect::<Vec<u8>>());
-            Some(Ok(b))
+            Some(Ok(create_packet(k, data)))
         } else {
             None
         }
   }).forward(sm_client)
+}
+
+// https://stackoverflow.com/a/72631195
+fn convert(data: &[u32; 2]) -> [u8; 8] {
+    let mut res = [0; 8];
+    for i in 0..2 {
+        res[2*i..][..2].copy_from_slice(&data[i].to_le_bytes());
+    }
+    res
+}
+
+fn create_packet(stream_id: u32, data: Vec<Vec<u8>>) -> Bytes {
+    let header = [stream_id, data.len() as u32];
+    let mut packet: Vec<u8> = convert(&header).into();
+    let mut flat_data: Vec<u8> = data.into_iter().flatten().collect();
+    packet.append(&mut flat_data);
+    Bytes::from(packet)
 }
