@@ -13,6 +13,7 @@ use crate::{dolphin_connection::DolphinConnection, spectator_mode_client::Specta
 
 mod dolphin_connection;
 mod spectator_mode_client;
+mod connection_manager;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
