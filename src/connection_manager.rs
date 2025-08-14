@@ -96,20 +96,6 @@ fn create_packet(stream_id: u32, data: Vec<Vec<u8>>) -> Bytes {
     Bytes::from(packet)
 }
 
-fn decode_packet(bytes: Bytes) -> (u32, u32, Vec<u8>) {
-    let stream_id_bytes = bytes.slice(0..4);
-    let stream_id_vec = stream_id_bytes.to_vec();
-    let stream_id = u32::from_le_bytes(stream_id_vec.try_into().unwrap());
-
-    let size_bytes = bytes.slice(4..8);
-    let size_vec = size_bytes.to_vec();
-    let size = u32::from_le_bytes(size_vec.try_into().unwrap());
-
-    let data = bytes.slice(8..).to_vec();
-
-    (stream_id, size, data)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,18 +120,5 @@ mod tests {
         assert_eq!(stream_id_vec, vec![57, 48, 0, 0]);
         assert_eq!(size_vec, vec![10, 0, 0, 0]);
         assert_eq!(data_vec, vec![255, 60, 75, 0, 1, 127, 205, 15, 99, 191]);
-    }
-
-    #[test]
-    fn decode_packet_reads_header_and_data() {
-        let data_1: Vec<u8> = vec![255, 60, 75, 0, 1, 127];
-        let data_2: Vec<u8> = vec![205, 15, 99, 191];
-        let data: Vec<Vec<u8>> = vec![data_1, data_2];
-        let packet = create_packet(12345, data);
-        let result = decode_packet(packet);
-
-        assert_eq!(result.0, 12345);
-        assert_eq!(result.1, 10);
-        assert_eq!(result.2, vec![255, 60, 75, 0, 1, 127, 205, 15, 99, 191]);
     }
 }
