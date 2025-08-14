@@ -24,7 +24,8 @@ pub enum WSError {
 
 pub struct MyClient {
     handle: ezsockets::Client<Self>,
-    connected_sender: async_channel::Sender<BridgeInfo>
+    connected_sender: async_channel::Sender<BridgeInfo>,
+    initially_connected: bool
 }
 
 pub struct SpectatorModeClient {
@@ -47,7 +48,11 @@ impl ezsockets::ClientExt for MyClient {
 
     async fn on_text(&mut self, text: ezsockets::Utf8Bytes) -> Result<(), Error> {
         let bridge_info = serde_json::from_str::<BridgeInfo>(text.as_str())?;
-        self.connected_sender.send(bridge_info).await?;
+        if !self.initially_connected {
+            self.connected_sender.send(bridge_info).await?;
+            self.initially_connected = true;
+            self.connected_sender.close();
+        }
         Ok(())
     }
 
@@ -109,7 +114,7 @@ pub async fn initiate_connection(address: &str) -> (SpectatorModeClient, impl st
     socket_config.timeout = Duration::from_secs(15);
     let config = ClientConfig::new(url).socket_config(socket_config).max_reconnect_attempts(3);
     let (connected_sender, connected_receiver) = async_channel::unbounded();
-    let (sm_handle, future) = ezsockets::connect(|handle| MyClient { handle, connected_sender }, config).await;
+    let (sm_handle, future) = ezsockets::connect(|handle| MyClient { handle, connected_sender, initially_connected: false }, config).await;
 
     let bridge_info = connected_receiver.recv().await.unwrap();
      tracing::info!(
