@@ -80,12 +80,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) {
     // Initiate connections.
     let (slippi_conn, mut slippi_interrupt) = connect_to_slippi(source).await;
-    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(dest).await;
+    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest).await;
     let mut slippi_interrupts = vec![&mut slippi_interrupt];
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let merged_stream = connection_manager::merge_slippi_streams(vec![&slippi_conn]);
+    let merged_stream = connection_manager::merge_slippi_streams(vec![&slippi_conn], bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = connection_manager::forward_slippi_data(merged_stream, sm_client);
     let extended_sm_client_future = async {
         let result = sm_client_future.await;

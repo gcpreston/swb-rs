@@ -4,18 +4,25 @@ use ezsockets::Bytes;
 
 use crate::{dolphin_connection::{ConnectionEvent, DolphinConnection}, spectator_mode_client::{SpectatorModeClient, WSError}};
 
-pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>) -> impl Stream<Item = (u32, Vec<ConnectionEvent>)> {
+/// Merge the event streams from multiple Slippi connections into one.
+/// Requires a list of unique stream IDs to assign which is at least as long as
+/// the list of Slippi connections.
+pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<ConnectionEvent>)>, String> {
+    if stream_ids.len() < slippi_conns.len() {
+        return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_conns.len()));
+    }
+
     let mut map = StreamMap::new();
     let mut k = 0;
 
     for slippi_conn in slippi_conns {
         let slippi_stream = slippi_conn.event_stream();
         // futures::pin_mut!(slippi_stream);
-        map.insert(k, slippi_stream);
+        map.insert(stream_ids[k], slippi_stream);
         k += 1;
     }
 
-    map
+    Ok(map)
 }
 
 /* Packet spec
