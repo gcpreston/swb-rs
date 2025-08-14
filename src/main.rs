@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) {
     // Initiate connections.
     let (slippi_conn, mut slippi_interrupt) = connect_to_slippi(source).await;
-    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest).await;
+    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, 1).await;
     let mut slippi_interrupts = vec![&mut slippi_interrupt];
 
     // Set up the futures to await.

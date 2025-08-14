@@ -107,12 +107,12 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn initiate_connection(address: &str) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>, BridgeInfo) {
+pub async fn initiate_connection(address: &str, stream_count: u32) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>, BridgeInfo) {
     tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
     socket_config.timeout = Duration::from_secs(15);
-    let config = ClientConfig::new(url).socket_config(socket_config).max_reconnect_attempts(3);
+    let config = ClientConfig::new(url).socket_config(socket_config).max_reconnect_attempts(3).query_parameter("stream_count", stream_count.to_string().as_str());
     let (connected_sender, connected_receiver) = async_channel::unbounded();
     let (sm_handle, future) = ezsockets::connect(|handle| MyClient { handle, connected_sender, initially_connected: false }, config).await;
 
