@@ -7,7 +7,7 @@ use crate::{dolphin_connection::{ConnectionEvent, DolphinConnection}, spectator_
 /// Merge the event streams from multiple Slippi connections into one.
 /// Requires a list of unique stream IDs to assign which is at least as long as
 /// the list of Slippi connections.
-pub fn merge_slippi_streams(slippi_conns: Vec<&DolphinConnection>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<ConnectionEvent>)>, String> {
+pub fn merge_slippi_streams(slippi_conns: &Vec<DolphinConnection>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<ConnectionEvent>)>, String> {
     if stream_ids.len() < slippi_conns.len() {
         return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_conns.len()));
     }

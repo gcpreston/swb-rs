@@ -107,7 +107,7 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn initiate_connection(address: &str, stream_count: u32) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>, BridgeInfo) {
+pub async fn initiate_connection(address: &str, stream_count: usize) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>, BridgeInfo) {
     tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();

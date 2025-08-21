@@ -1,4 +1,4 @@
-use std::{error::Error, net::SocketAddr, str::FromStr};
+use std::{error::Error, net::SocketAddr, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::Parser;
 use futures::{channel::mpsc::channel, future};
@@ -23,7 +23,7 @@ struct Args {
     dest: String,
 
     #[arg(short, long, default_value = "127.0.0.1:51441")]
-    source: String,
+    source: Vec<String>,
 
     #[arg(short, long, action)]
     verbose: bool
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            connect_and_forward_packets_until_completion(args.source.as_str(), args.dest.as_str()).await;
+            connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
         });
 
     println!("\nGoodbye!");
@@ -77,19 +77,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) {
+async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {
     // Initiate connections.
-    let (slippi_conn, mut slippi_interrupt) = connect_to_slippi(source).await;
-    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, 1).await;
-    let mut slippi_interrupts = vec![&mut slippi_interrupt];
+    let mut slippi_conns: Vec<DolphinConnection> = vec![];
+    let mut slippi_interrupts = vec![];
+    let sources_owned = sources.clone();
+    let mut already_interrupted = false;
+
+    for source in sources_owned {
+        let (slippi_conn, slippi_interrupt) = connect_to_slippi(source).await;
+        slippi_conns.push(slippi_conn);
+        slippi_interrupts.push(slippi_interrupt);
+    }
+
+    let slippi_interrupts = Arc::new(Mutex::new(slippi_interrupts));
+    let slippi_interrupts_clone = Arc::clone(&slippi_interrupts);
+
+    ctrlc::set_handler(move || {
+        if already_interrupted {
+            std::process::exit(2);
+        } else {
+            already_interrupted = true;
+            for interrupt in slippi_interrupts.lock().unwrap().iter_mut() {
+                interrupt();
+            }
+        }
+    })
+    .unwrap();
+
+    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await;
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let merged_stream = connection_manager::merge_slippi_streams(vec![&slippi_conn], bridge_info.stream_ids).unwrap();
+    let merged_stream = connection_manager::merge_slippi_streams(&slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = connection_manager::forward_slippi_data(merged_stream, sm_client);
     let extended_sm_client_future = async {
         let result = sm_client_future.await;
-        slippi_interrupts.iter_mut().for_each(|interrupt| interrupt());
+        slippi_interrupts_clone.lock().unwrap().iter_mut().for_each(|interrupt| interrupt());
         result
     };
 
@@ -100,14 +124,12 @@ async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) 
     log_sm_client_result(sm_client_result);
 }
 
-async fn connect_to_slippi(source_addr: &str) -> (DolphinConnection, impl FnMut() -> ()) {
-    let (mut sender, receiver) = channel::<enet::PeerID>(100);
+async fn connect_to_slippi(source_addr: String) -> (DolphinConnection, impl FnMut()) {
+    let (sender, receiver) = channel::<enet::PeerID>(100);
     let mut other_sender = sender.clone();
 
-    let mut already_interrupted = false;
-
     let conn = dolphin_connection::DolphinConnection::new(receiver);
-    let address = SocketAddr::from_str(source_addr).expect("Invalid socket address");
+    let address = SocketAddr::from_str(source_addr.as_str()).expect("Invalid socket address");
     tracing::info!("Connecting to Slippi...");
     let peer_id = conn.initiate_connection(address);
     conn.wait_for_connected().await;
@@ -117,17 +139,7 @@ async fn connect_to_slippi(source_addr: &str) -> (DolphinConnection, impl FnMut(
         other_sender.try_send(peer_id).unwrap();
     };
 
-    ctrlc::set_handler(move || {
-        if already_interrupted {
-            std::process::exit(2);
-        } else {
-            already_interrupted = true;
-            sender.try_send(peer_id).unwrap();
-        }
-    })
-    .unwrap();
-
-    (conn, interruptor_to_return)
+    (conn, interruptor_to_return.clone())
 }
 
 fn log_forward_result(result: Result<(), WSError>) {
