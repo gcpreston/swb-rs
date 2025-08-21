@@ -1,18 +1,17 @@
 use std::{error::Error, net::SocketAddr, str::FromStr};
 
 use clap::Parser;
-use dolphin_connection::ConnectionEvent;
-use ezsockets::Bytes;
-use futures::{channel::mpsc::channel, future, StreamExt};
+use futures::{channel::mpsc::channel, future};
 use rusty_enet as enet;
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
 
-use crate::{dolphin_connection::DolphinConnection, spectator_mode_client::SpectatorModeClient};
+use crate::{dolphin_connection::DolphinConnection};
 
 mod dolphin_connection;
 mod spectator_mode_client;
+mod connection_manager;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -81,14 +80,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn connect_and_forward_packets_until_completion(source: &str, dest: &str) {
     // Initiate connections.
     let (slippi_conn, mut slippi_interrupt) = connect_to_slippi(source).await;
-    let (sm_client, sm_client_future) = spectator_mode_client::initiate_connection(dest).await;
+    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, 1).await;
+    let mut slippi_interrupts = vec![&mut slippi_interrupt];
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let dolphin_to_sm = forward_slippi_data(&slippi_conn, sm_client);
+    let merged_stream = connection_manager::merge_slippi_streams(vec![&slippi_conn], bridge_info.stream_ids).unwrap();
+    let dolphin_to_sm = connection_manager::forward_slippi_data(merged_stream, sm_client);
     let extended_sm_client_future = async {
         let result = sm_client_future.await;
-        slippi_interrupt();
+        slippi_interrupts.iter_mut().for_each(|interrupt| interrupt());
         result
     };
 
@@ -127,40 +128,6 @@ async fn connect_to_slippi(source_addr: &str) -> (DolphinConnection, impl FnMut(
     .unwrap();
 
     (conn, interruptor_to_return)
-}
-
-
-fn forward_slippi_data(slippi_conn: &DolphinConnection, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
-    slippi_conn
-        .event_stream()
-        .filter_map(async |es| {
-            let mut data: Vec<Vec<u8>> = Vec::new();
-
-            let _: Vec<()> =
-                es.into_iter().map(|e| {
-                    // Side-effects
-                    // ConnectionEvent::Connected will not reach the stream because
-                    // it is awaited before initiating the SpectatorMode connection.
-                    match e {
-                        ConnectionEvent::StartGame => tracing::info!("Received game start event."),
-                        ConnectionEvent::EndGame => tracing::info!("Received game end event."),
-                        ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
-                        ConnectionEvent::Message { payload } => {
-                            data.push(payload);
-                        },
-                        _ => ()
-                    };
-                }).collect();
-
-            // Return
-            if data.len() > 0 {
-                let b = Bytes::from(data.into_iter().flatten().collect::<Vec<u8>>());
-                Some(Ok(b))
-            } else {
-                None
-            }
-        })
-        .forward(sm_client)
 }
 
 fn log_forward_result(result: Result<(), WSError>) {
