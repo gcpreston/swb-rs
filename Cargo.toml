@@ -22,3 +22,5 @@ ctrlc = "3.4.7"
 self_update = { version = "0.42.0", features = ["archive-tar", "archive-zip", "compression-flate2"] }
 tokio-stream = "0.1.17"
 async-channel = "2.5.0"
+byteorder = "1.5.0"
+ubjson-rs = { path = "../ubjson_rs" }
