@@ -1,5 +1,4 @@
-use std::{cell::RefCell, error::Error, io::{Read, Write}, net::SocketAddr, str::FromStr, sync::{Arc, Mutex}, thread::sleep};
-use std::io::Cursor;
+use std::{error::Error, net::SocketAddr, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::Parser;
 use futures::{channel::mpsc::channel, future, StreamExt};
@@ -7,7 +6,6 @@ use rusty_enet as enet;
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
-use ubjson_rs::deserializer::UbjsonDeserializer;
 
 use crate::{console_connection::SlippiStream, dolphin_connection::DolphinConnection};
 
@@ -83,76 +81,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn test_console_connection() {
     let mut conn = console_connection::ConsoleConnection::connect("192.168.2.2:51441").unwrap();
-    let mut total_buf: Vec<u8> = Vec::new();
-    let mut leftover = Cursor::new(Vec::new());
-
-    // Receive and parse loop
-    loop {
-        let mut msg_size_buf = [0 as u8; 4];
-
-        let read_result =
-            match leftover.read_exact(&mut msg_size_buf) {
-                Ok(amount) => {
-                    println!("got from leftover");
-                    Ok(amount)
-                },
-                Err(e) => {
-                    println!("got from conn");
-                    conn.stream.read_exact(&mut msg_size_buf)
-                }
-            };
-
-        match read_result {
-            Ok(_) => {
-                let msg_size = u32::from_be_bytes(msg_size_buf);
-                let mut bytes_remaining: usize = msg_size as usize;
-                println!("Receiving message of size {:?} ({:?}), remaining: {:?}", msg_size, msg_size_buf, bytes_remaining);
-
-                while bytes_remaining > 0 {
-                    let mut local_buf = [0 as u8; 1024];
-                    let leftover_bytes_read = leftover.read(&mut local_buf).unwrap();
-                    let bytes_read =
-                        if leftover_bytes_read > 0 {
-                            leftover_bytes_read
-                        } else {
-                            conn.stream.read(&mut local_buf).unwrap()
-                        };
-
-                    println!("Read bytes {:?}, left {:?}", bytes_read, bytes_remaining);
-
-                    if bytes_read > bytes_remaining {
-                        total_buf.append(&mut local_buf[..bytes_remaining].to_vec());
-                        let leftover_range = bytes_remaining..bytes_read;
-                        let leftover_slice = &local_buf[leftover_range];
-                        println!("leftover_range length {:?}", bytes_read - bytes_remaining - 1);
-                        println!("Set leftover to {:?} (length {:?})", leftover_slice, leftover_slice.len());
-                        // leftover.write(leftover_slice).unwrap();
-                        // leftover.set_position(0);
-                        leftover = Cursor::new(leftover_slice.to_vec());
-                        bytes_remaining = 0;
-                    } else {
-                        total_buf.append(&mut local_buf[0..bytes_read].to_vec());
-                        bytes_remaining -= bytes_read;
-                    }
-                }
-
-                // Message received; deserialize
-                println!("Received message: {:?}, length {:?}", total_buf, total_buf.len());
-                let mut  deserializer = UbjsonDeserializer::new(Cursor::new(total_buf.clone()));
-                let result = deserializer.deserialize_value();
-                println!("deserialized: {:?}", result);
-
-                total_buf.clear();
-                sleep(std::time::Duration::from_millis(10));
-            }
-
-            Err(e) => {
-                println!("got error on read_exact: {:?}", e);
-                sleep(std::time::Duration::from_millis(100));
-            }
-        }
-
-    }
 
     // conn.event_stream().map(|buf| {
     //     let mut i = buf.iter();
