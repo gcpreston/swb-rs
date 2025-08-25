@@ -7,12 +7,13 @@ use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
 
-use crate::{console_connection::SlippiStream, dolphin_connection::DolphinConnection};
+use crate::common::SlippiDataStream;
 
 mod dolphin_connection;
 mod console_connection;
 mod spectator_mode_client;
 mod connection_manager;
+mod common;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -70,8 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            // connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
-            test_console_connection().await;
+            connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
+            // test_console_connection().await;
         });
 
     println!("\nGoodbye!");
@@ -82,71 +83,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_console_connection() {
     let mut conn = console_connection::ConsoleConnection::connect("192.168.2.2:51441").unwrap();
 
-    // conn.event_stream().map(|buf| {
-    //     let mut i = buf.iter();
-    //     i.next();
-    //     i.next();
-    //     i.next();
-    //     i.next();
-
-    //     println!("got buf: {:?}", i);
-    //     // let chars: Vec<char> = buf.iter().map(|n| {
-    //     //     match char::from_u32((*n).into()) {
-    //     //         None => ' ',
-    //     //         Some('\0') => ' ',
-    //     //         Some(c) => c
-    //     //     }
-    //     // }).collect();
-    //     // let s: String = chars.into_iter().collect();
-    //     // println!("translated buf: {:?}", s);
-
-    //     let mut  deserializer = UbjsonDeserializer::new(Cursor::new(i));
-    //     let result = deserializer.deserialize_value();
-    //     println!("deserialized: {:?}", result)
-
-    //     /* PROCESS
-    //      * 1. Read uint32 big endian for byte size of message
-    //      * 2. Read that many bytes into buffer
-    //      * 3. Parse that many bytes as UBJSON; handle
-    //      *
-    //      * UBJSON is made so that it can be streamed, but since the JS library
-    //      * doesn't offer this capability, they had to put another layer on top
-    //      * to ensure full-message parsing in JS. Could make my job easier,
-    //      * since no need to implement UBJSON streaming, just full ser/de.
-    //      *
-    //      * They seem to use msgSize + 4 in slippi-js though, TODO figure out why
-    //      *
-    //      * Each message is parsed as CommunicationMessage type:
-    //      *
-    //        export enum CommunicationType {
-    //         HANDSHAKE = 1,
-    //         REPLAY = 2,
-    //         KEEP_ALIVE = 3,
-    //        }
-
-    //        export type CommunicationMessage = {
-    //         type: CommunicationType;
-    //         payload: {
-    //             cursor: Uint8Array;
-    //             clientToken: Uint8Array;
-    //             pos: Uint8Array;
-    //             nextPos: Uint8Array;
-    //             data: Uint8Array;
-    //             nick: string | null;
-    //             forcePos: boolean;
-    //             nintendontVersion: string | null;
-    //         };
-    //        };
-
-    //      * The type is not 100% accurate, for example the keep-alive message
-    //      * is just { type: 3 }.
-    //      */
-    // }).collect::<()>().await;
+    conn.data_stream().map(|data| {
+        println!("event stream data: {:?}", data);
+    }).collect::<()>().await;
 }
 
 async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {
     // Initiate connections.
-    let mut slippi_conns: Vec<DolphinConnection> = vec![];
+    let mut slippi_conns: Vec<Box<dyn SlippiDataStream>> = vec![];
     let mut slippi_interrupts = vec![];
     let sources_owned = sources.clone();
     let mut already_interrupted = false;
@@ -176,7 +120,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let merged_stream = connection_manager::merge_slippi_streams(&slippi_conns, bridge_info.stream_ids).unwrap();
+    let merged_stream = connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = connection_manager::forward_slippi_data(merged_stream, sm_client);
     let extended_sm_client_future = async {
         let result = sm_client_future.await;
@@ -191,7 +135,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     log_sm_client_result(sm_client_result);
 }
 
-async fn connect_to_slippi(source_addr: String) -> (DolphinConnection, impl FnMut()) {
+async fn connect_to_slippi(source_addr: String) -> (Box<dyn SlippiDataStream>, impl FnMut()) {
     let (sender, receiver) = channel::<enet::PeerID>(100);
     let mut other_sender = sender.clone();
 
@@ -206,7 +150,7 @@ async fn connect_to_slippi(source_addr: String) -> (DolphinConnection, impl FnMu
         other_sender.try_send(peer_id).unwrap();
     };
 
-    (conn, interruptor_to_return.clone())
+    (Box::new(conn), interruptor_to_return.clone())
 }
 
 fn log_forward_result(result: Result<(), WSError>) {

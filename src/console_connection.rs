@@ -16,10 +16,9 @@ use std::{
     io::{Read, Result, Write, Cursor},
     net::{TcpStream, ToSocketAddrs},
     time::Duration,
-    thread::sleep
+    pin::Pin
 };
 use futures::{
-    channel::mpsc::Receiver,
     stream::{self, Stream},
     task::{Context, Poll}
 };
@@ -27,11 +26,7 @@ use serde::Deserialize;
 use tokio::time::interval;
 // use thiserror::Error;
 
-
-pub trait SlippiStream {
-    // TODO: Have this be ConnectionEvent? Or have DolphinConnection just give a stream of u8?
-    fn event_stream(&mut self) -> impl Stream<Item = Vec<u8>>;
-}
+use crate::common::SlippiDataStream;
 
 // #[derive(Error, Debug)]
 // pub enum ConsoleError {
@@ -106,13 +101,16 @@ impl ConsoleConnection {
     }
 }
 
-impl SlippiStream for ConsoleConnection {
-    fn event_stream(&mut self) -> impl Stream<Item = Vec<u8>> {
+impl SlippiDataStream for ConsoleConnection {
+    fn data_stream(&mut self) -> Pin<Box<dyn Stream<Item = Vec<u8>>>> {
+        // Move the stream out of self
+        let mut stream = std::mem::replace(&mut self.stream, TcpStream::connect("127.0.0.1:0").unwrap());
+        
         // Poll console connection at 120Hz
         let mut i = interval(Duration::from_micros(8333));
-        let mut dcd = false; // TODO: Handle DC
+        let dcd = false; // TODO: Handle DC
 
-        stream::poll_fn(move |cx: &mut Context<'_>| {
+        Box::pin(stream::poll_fn(move |cx: &mut Context<'_>| {
             if dcd {
                 Poll::Ready(None)
             } else {
@@ -132,9 +130,9 @@ impl SlippiStream for ConsoleConnection {
                                     println!("got from leftover");
                                     Ok(amount)
                                 },
-                                Err(e) => {
+                                Err(_e) => {
                                     println!("got from conn");
-                                    self.stream.read_exact(&mut msg_size_buf)
+                                    stream.read_exact(&mut msg_size_buf)
                                 }
                             };
 
@@ -151,7 +149,7 @@ impl SlippiStream for ConsoleConnection {
                                         if leftover_bytes_read > 0 {
                                             leftover_bytes_read
                                         } else {
-                                            self.stream.read(&mut local_buf).unwrap()
+                                            stream.read(&mut local_buf).unwrap()
                                         };
 
                                     println!("Read bytes {:?}, left {:?}", bytes_read, bytes_remaining);
@@ -178,10 +176,10 @@ impl SlippiStream for ConsoleConnection {
                                 println!("deserialized: {:?}", result);
 
                                 total_buf.clear();
+                                cx.waker().clone().wake();
 
                                 match result.payload {
                                     None => {
-                                        sleep(Duration::from_millis(10));
                                         Poll::Pending
                                     }
                                     Some(payload) => {
@@ -198,6 +196,6 @@ impl SlippiStream for ConsoleConnection {
                     }
                 }
             }
-        })
+        }))
     }
 }
