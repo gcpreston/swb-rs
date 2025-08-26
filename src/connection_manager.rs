@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use tokio_stream::StreamMap;
 use futures::{stream::StreamExt, Stream, Future};
 use ezsockets::Bytes;
@@ -10,17 +12,15 @@ use crate::{
 /// Merge the event streams from multiple Slippi connections into one.
 /// Requires a list of unique stream IDs to assign which is at least as long as
 /// the list of Slippi connections.
-pub fn merge_slippi_streams(slippi_conns: Vec<Box<dyn SlippiDataStream>>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<u8>)>, String> {
-    if stream_ids.len() < slippi_conns.len() {
-        return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_conns.len()));
+pub fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<u8>)>, String> {
+    if stream_ids.len() < slippi_data_streams.len() {
+        return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_data_streams.len()));
     }
 
     let mut map = StreamMap::new();
     let mut k = 0;
 
-    for mut slippi_conn in slippi_conns {
-        let slippi_stream = slippi_conn.data_stream();
-        // futures::pin_mut!(slippi_stream);
+    for slippi_stream in slippi_data_streams {
         map.insert(stream_ids[k], slippi_stream);
         k += 1;
     }
@@ -52,7 +52,6 @@ pub fn merge_slippi_streams(slippi_conns: Vec<Box<dyn SlippiDataStream>>, stream
 
 pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
     stream.filter_map(async |(k, v)| {
-        Some(Ok(create_packet(k, v)))
         // let mut data: Vec<Vec<u8>> = Vec::new();
 
         // let _: Vec<()> =
@@ -71,12 +70,12 @@ pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client
         //         };
         //     }).collect();
 
-        // // Return
-        // if data.len() > 0 {
-        //     Some(Ok(create_packet(k, data)))
-        // } else {
-        //     None
-        // }
+        // Return
+        if v.len() > 0 {
+            Some(Ok(create_packet(k, v)))
+        } else {
+            None
+        }
   }).forward(sm_client)
 }
 

@@ -1,8 +1,7 @@
-use std::{error::Error, net::SocketAddr, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, net::SocketAddr, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::Parser;
-use futures::{channel::mpsc::channel, future, StreamExt};
-use rusty_enet as enet;
+use futures::{channel::mpsc::channel, future};
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
@@ -72,7 +71,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
         .block_on(async {
             connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
-            // test_console_connection().await;
         });
 
     println!("\nGoodbye!");
@@ -80,23 +78,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn test_console_connection() {
-    let mut conn = console_connection::ConsoleConnection::connect("192.168.2.2:51441").unwrap();
-
-    conn.data_stream().map(|data| {
-        println!("event stream data: {:?}", data);
-    }).collect::<()>().await;
-}
-
 async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {
     // Initiate connections.
-    let mut slippi_conns: Vec<Box<dyn SlippiDataStream>> = vec![];
+    let mut slippi_conns = vec![];
     let mut slippi_interrupts = vec![];
     let sources_owned = sources.clone();
     let mut already_interrupted = false;
 
-    for source in sources_owned {
-        let (slippi_conn, slippi_interrupt) = connect_to_slippi(source).await;
+    for source_string in sources_owned {
+        let source_addr = SocketAddr::from_str(source_string.as_str()).expect("Invalid socket address");
+        let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, false).await;
         slippi_conns.push(slippi_conn);
         slippi_interrupts.push(slippi_interrupt);
     }
@@ -135,22 +126,24 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     log_sm_client_result(sm_client_result);
 }
 
-async fn connect_to_slippi(source_addr: String) -> (Box<dyn SlippiDataStream>, impl FnMut()) {
-    let (sender, receiver) = channel::<enet::PeerID>(100);
+async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Box<SlippiDataStream>>, impl FnMut()) {
+    let (sender, receiver) = channel::<bool>(100);
     let mut other_sender = sender.clone();
 
-    let conn = dolphin_connection::DolphinConnection::new(receiver);
-    let address = SocketAddr::from_str(source_addr.as_str()).expect("Invalid socket address");
     tracing::info!("Connecting to Slippi...");
-    let peer_id = conn.initiate_connection(address);
-    conn.wait_for_connected().await;
+    let conn  =
+        if is_console {
+            console_connection::data_stream(source_addr).await
+        } else {
+            dolphin_connection::data_stream(source_addr, receiver).await
+        };
     tracing::info!("Connected to Slippi.");
 
     let interruptor_to_return = move || {
-        other_sender.try_send(peer_id).unwrap();
+        other_sender.try_send(true).unwrap();
     };
 
-    (Box::new(conn), interruptor_to_return.clone())
+    (conn, interruptor_to_return.clone())
 }
 
 fn log_forward_result(result: Result<(), WSError>) {

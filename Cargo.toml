@@ -24,3 +24,4 @@ tokio-stream = "0.1.17"
 async-channel = "2.5.0"
 byteorder = "1.5.0"
 ubjson-rs = { path = "../ubjson_rs" }
+async-stream = "0.3.6"
