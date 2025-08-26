@@ -2383,6 +2383,7 @@ checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
 [[package]]
 name = "ubjson-rs"
 version = "0.1.0"
+source = "git+https://github.com/gcpreston/ubjson_rs.git#9588bb98f073bf1847a2e008eda5372f83480d1b"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
