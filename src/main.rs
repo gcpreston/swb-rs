@@ -1,10 +1,11 @@
-use std::{error::Error, net::SocketAddr, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, net::{Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::Parser;
 use futures::{channel::mpsc::channel, future};
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
+use url::{Host, Url};
 
 use crate::common::SlippiDataStream;
 
@@ -23,7 +24,7 @@ struct Args {
     #[arg(short, long, default_value = "wss://spectatormode.tv/bridge_socket/websocket")]
     dest: String,
 
-    #[arg(short, long, default_value = "127.0.0.1:51441")]
+    #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
 
     #[arg(short, long, action)]
@@ -86,8 +87,33 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     let mut already_interrupted = false;
 
     for source_string in sources_owned {
-        let source_addr = SocketAddr::from_str(source_string.as_str()).expect("Invalid socket address");
-        let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, false).await;
+        let string_to_parse =
+            if !source_string.contains("://") {
+                format!("{}{}", "console://", source_string)
+            } else {
+                source_string
+            };
+        let parsed_url = Url::parse(string_to_parse.as_str()).expect("Invalid URL scheme");
+
+        let scheme = parsed_url.scheme();
+        let host = parsed_url.host().unwrap_or(Host::Ipv4(Ipv4Addr::from_str("127.0.0.1").unwrap()));
+        let port = parsed_url.port().unwrap_or(51441);
+
+        tracing::debug!("using url scheme: {:?}, host: {:?}, port: {:?}", scheme, host, port);
+
+        let socket_addr_string = format!("{}:{}", host, port);
+        let source_addr = SocketAddr::from_str(socket_addr_string.as_str()).expect("Invalid socket address");
+        let is_console =
+            match scheme {
+                "console" => true,
+                "dolphin" => false,
+                _ => {
+                    tracing::error!("Invalid Slippi platform scheme");
+                    return;
+                }
+            };
+
+        let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, is_console).await;
         slippi_conns.push(slippi_conn);
         slippi_interrupts.push(slippi_interrupt);
     }
@@ -130,14 +156,13 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     let (sender, receiver) = channel::<bool>(100);
     let mut other_sender = sender.clone();
 
-    tracing::info!("Connecting to Slippi...");
+    tracing::info!("Connecting to Slippi {} at {}...", if is_console { "console" } else { "Dolphin" }, source_addr);
     let conn  =
         if is_console {
             console_connection::data_stream(source_addr).await
         } else {
             dolphin_connection::data_stream(source_addr, receiver).await
         };
-    tracing::info!("Connected to Slippi.");
 
     let interruptor_to_return = move || {
         match other_sender.try_send(true) {
