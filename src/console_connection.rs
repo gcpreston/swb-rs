@@ -63,11 +63,11 @@ async fn establish_console_connection(addr: SocketAddr) -> Result<TcpStream, Con
     result.map_err(|io_error| ConsoleCommunicationError::SocketConnectionError(io_error))
 }
 
-async fn read_next_message(stream: &mut TcpStream) -> Result<CommunicationMessage, ConsoleCommunicationError> {
+async fn read_next_message(tcp_stream: &mut TcpStream) -> Result<CommunicationMessage, ConsoleCommunicationError> {
     // TODO: Map Err value `Os { code: 61, kind: ConnectionRefused, message: "Connection refused" }` to ConsoleConnectionError
-    let msg_size = stream.read_u32().await?;
+    let msg_size = tcp_stream.read_u32().await?;
     let mut msg_buf: Vec<u8> = vec![0; msg_size as usize];
-    stream.read_exact(&mut msg_buf).await?;
+    tcp_stream.read_exact(&mut msg_buf).await?;
 
     let result: CommunicationMessage = ubjson_rs::from_slice(&msg_buf)?;
     Ok(result)
@@ -79,8 +79,16 @@ pub async fn data_stream(addr:  SocketAddr, mut interrupt_receiver: Receiver<boo
 
     Box::pin(stream! {
         loop {
-            if let Ok(Some(_)) = interrupt_receiver.try_next() {
-                break
+            match interrupt_receiver.try_next() {
+                Ok(Some(_)) => {
+                    // interrupt was sent
+                    break
+                }
+                Ok(None) => {
+                    // interrupt channel is closed; try to keep running if possible
+                    tracing::error!("Interrupt channel closed unexpectedly");
+                }
+                _ => ()
             }
 
             match read_next_message(&mut tcp_stream).await {
