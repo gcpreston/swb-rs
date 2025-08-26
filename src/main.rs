@@ -16,14 +16,17 @@ mod connection_manager;
 mod common;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about)]
 struct Args {
     #[arg(long)]
     skip_update: bool,
 
+    /// The SpectatorMode WebSocket endpoint to connect and forward data to.
     #[arg(short, long, default_value = "wss://spectatormode.tv/bridge_socket/websocket")]
     dest: String,
 
+    /// Slippi sources to forward data from, in the format schema://host:port.
+    /// schema may be "console" or "dolphin". Multiple may be specified.
     #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
 
