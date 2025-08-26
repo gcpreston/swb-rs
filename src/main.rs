@@ -159,7 +159,7 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     tracing::info!("Connecting to Slippi {} at {}...", if is_console { "console" } else { "Dolphin" }, source_addr);
     let conn  =
         if is_console {
-            console_connection::data_stream(source_addr).await
+            console_connection::data_stream(source_addr, receiver).await
         } else {
             dolphin_connection::data_stream(source_addr, receiver).await
         };

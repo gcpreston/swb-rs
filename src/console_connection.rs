@@ -2,6 +2,7 @@ use std::{
     net::SocketAddr, pin::Pin
 };
 use serde::{Deserialize, Serialize};
+use futures::channel::mpsc::Receiver;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt}, 
     net::TcpStream, 
@@ -18,6 +19,7 @@ struct CommunicationMessage {
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
+#[allow(non_snake_case)]
 struct CommunicationMessagePayload {
     cursor: Option<Vec<u8>>,
     clientToken: Option<Vec<u8>>,
@@ -71,12 +73,16 @@ async fn read_next_message(stream: &mut TcpStream) -> Result<CommunicationMessag
     Ok(result)
 }
 
-pub async fn data_stream(addr:  SocketAddr) -> Pin<Box<SlippiDataStream>> {
+pub async fn data_stream(addr:  SocketAddr, mut interrupt_receiver: Receiver<bool>) -> Pin<Box<SlippiDataStream>> {
     let mut tcp_stream = establish_console_connection(addr).await.unwrap();
     tracing::info!("Connected to Slippi.");
 
     Box::pin(stream! {
         loop {
+            if let Ok(Some(_)) = interrupt_receiver.try_next() {
+                break
+            }
+
             match read_next_message(&mut tcp_stream).await {
                 Ok(message) => {
                     match message.payload {
