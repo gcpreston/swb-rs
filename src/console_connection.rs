@@ -7,7 +7,7 @@ use tokio::{
     net::TcpStream, 
 };
 use async_stream::stream;
-// use thiserror::Error;
+use thiserror::Error;
 
 use crate::common::SlippiDataStream;
 
@@ -29,6 +29,15 @@ struct CommunicationMessagePayload {
     nintendont_version: Option<String>
 }
 
+#[derive(Error, Debug)]
+pub enum ConsoleCommunicationError {
+    #[error("Read error: {0}")]
+    SocketReadError(#[from] std::io::Error),
+
+    #[error("Decode error: {0}")]
+    DecodeError(#[from] ubjson_rs::UbjsonError),
+}
+
 async fn establish_console_connection(addr: SocketAddr) -> std::io::Result<TcpStream> {
     let mut stream = TcpStream::connect(addr).await?;
     let dummy_handshake_out: Vec<u8> = vec![
@@ -45,16 +54,13 @@ async fn establish_console_connection(addr: SocketAddr) -> std::io::Result<TcpSt
     Ok(stream)
 }
 
-async fn read_next_message(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+async fn read_next_message(stream: &mut TcpStream) -> Result<CommunicationMessage, ConsoleCommunicationError> {
     let msg_size = stream.read_u32().await?;
     let mut msg_buf: Vec<u8> = vec![0; msg_size as usize];
     stream.read_exact(&mut msg_buf).await?;
 
-    let result: CommunicationMessage = ubjson_rs::from_slice(&msg_buf).unwrap();
-    match result.payload {
-        None => Ok(Vec::new()),
-        Some(payload) => Ok(payload.data)
-    }
+    let result: CommunicationMessage = ubjson_rs::from_slice(&msg_buf)?;
+    Ok(result)
 }
 
 pub async fn data_stream(addr:  SocketAddr) -> Pin<Box<SlippiDataStream>> {
@@ -63,8 +69,13 @@ pub async fn data_stream(addr:  SocketAddr) -> Pin<Box<SlippiDataStream>> {
 
         loop {
             match read_next_message(&mut tcp_stream).await {
-                Ok(message) => yield message,
-                Err(_) => break,
+                Ok(message) => {
+                    match message.payload {
+                        None => continue,
+                        Some(payload) => yield payload.data
+                    }
+                }
+                Err(_) => break
             }
         }
     })
