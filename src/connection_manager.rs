@@ -1,23 +1,26 @@
+use std::pin::Pin;
+
 use tokio_stream::StreamMap;
-use futures::{stream::StreamExt, Stream};
+use futures::{stream::StreamExt, Stream, Future};
 use ezsockets::Bytes;
 
-use crate::{dolphin_connection::{ConnectionEvent, DolphinConnection}, spectator_mode_client::{SpectatorModeClient, WSError}};
+use crate::{
+    common::SlippiDataStream,
+    spectator_mode_client::{SpectatorModeClient, WSError}
+};
 
 /// Merge the event streams from multiple Slippi connections into one.
 /// Requires a list of unique stream IDs to assign which is at least as long as
 /// the list of Slippi connections.
-pub fn merge_slippi_streams(slippi_conns: &Vec<DolphinConnection>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<ConnectionEvent>)>, String> {
-    if stream_ids.len() < slippi_conns.len() {
-        return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_conns.len()));
+pub fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<u8>)>, String> {
+    if stream_ids.len() < slippi_data_streams.len() {
+        return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_data_streams.len()));
     }
 
     let mut map = StreamMap::new();
     let mut k = 0;
 
-    for slippi_conn in slippi_conns {
-        let slippi_stream = slippi_conn.event_stream();
-        // futures::pin_mut!(slippi_stream);
+    for slippi_stream in slippi_data_streams {
         map.insert(stream_ids[k], slippi_stream);
         k += 1;
     }
@@ -47,29 +50,29 @@ pub fn merge_slippi_streams(slippi_conns: &Vec<DolphinConnection>, stream_ids: V
  * byte size would be required.
  */
 
-pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<ConnectionEvent>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
+pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
     stream.filter_map(async |(k, v)| {
-        let mut data: Vec<Vec<u8>> = Vec::new();
+        // let mut data: Vec<Vec<u8>> = Vec::new();
 
-        let _: Vec<()> =
-            v.into_iter().map(|e| {
-                // Side-effects
-                // ConnectionEvent::Connected will not reach the stream because
-                // it is awaited before initiating the SpectatorMode connection.
-                match e {
-                    ConnectionEvent::StartGame => tracing::info!("Received game start event."),
-                    ConnectionEvent::EndGame => tracing::info!("Received game end event."),
-                    ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
-                    ConnectionEvent::Message { payload } => {
-                        data.push(payload);
-                    },
-                    _ => ()
-                };
-            }).collect();
+        // let _: Vec<()> =
+        //     v.into_iter().map(|e| {
+        //         // Side-effects
+        //         // ConnectionEvent::Connected will not reach the stream because
+        //         // it is awaited before initiating the SpectatorMode connection.
+        //         match e {
+        //             ConnectionEvent::StartGame => tracing::info!("Received game start event."),
+        //             ConnectionEvent::EndGame => tracing::info!("Received game end event."),
+        //             ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
+        //             ConnectionEvent::Message { payload } => {
+        //                 data.push(payload);
+        //             },
+        //             _ => ()
+        //         };
+        //     }).collect();
 
         // Return
-        if data.len() > 0 {
-            Some(Ok(create_packet(k, data)))
+        if v.len() > 0 {
+            Some(Ok(create_packet(k, v)))
         } else {
             None
         }
@@ -85,14 +88,13 @@ fn create_header(data: &[u32; 2]) -> [u8; 8] {
     res
 }
 
-fn create_packet(stream_id: u32, data: Vec<Vec<u8>>) -> Bytes {
+fn create_packet(stream_id: u32, mut data: Vec<u8>) -> Bytes {
     // TODO: Could this be more efficient by using BytesMut?
     //   Think this would have to depend on the bytes package, and the packet sizes
     //   would have to be known beforehand.
-    let mut flat_data: Vec<u8> = data.into_iter().flatten().collect();
-    let header = [stream_id, flat_data.len() as u32];
+    let header = [stream_id, data.len() as u32];
     let mut packet: Vec<u8> = create_header(&header).into();
-    packet.append(&mut flat_data);
+    packet.append(&mut data);
     Bytes::from(packet)
 }
 
@@ -108,9 +110,7 @@ mod tests {
 
     #[test]
     fn create_packet_generates_valid_packet() {
-        let data_1: Vec<u8> = vec![255, 60, 75, 0, 1, 127];
-        let data_2: Vec<u8> = vec![205, 15, 99, 191];
-        let data: Vec<Vec<u8>> = vec![data_1, data_2];
+        let data: Vec<u8> = vec![255, 60, 75, 0, 1, 127, 205, 15, 99, 191];
         let result = create_packet(12345, data);
 
         let stream_id_vec = result.slice(0..4).to_vec();
