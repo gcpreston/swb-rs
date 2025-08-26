@@ -140,10 +140,13 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     tracing::info!("Connected to Slippi.");
 
     let interruptor_to_return = move || {
-        other_sender.try_send(true).unwrap();
+        match other_sender.try_send(true) {
+            Ok(_) => tracing::debug!("interrupt sent"),
+            Err(_) => tracing::debug!("sender already disconnected")
+        }
     };
 
-    (conn, interruptor_to_return.clone())
+    (conn, interruptor_to_return)
 }
 
 fn log_forward_result(result: Result<(), WSError>) {
