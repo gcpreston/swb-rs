@@ -1,11 +1,12 @@
 use std::{
-    net::SocketAddr, pin::Pin
+    net::SocketAddr, pin::Pin, time::Duration
 };
 use serde::{Deserialize, Serialize};
 use futures::channel::mpsc::Receiver;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt}, 
     net::TcpStream, 
+    time::timeout
 };
 use async_stream::stream;
 use thiserror::Error;
@@ -85,21 +86,33 @@ pub async fn data_stream(addr:  SocketAddr, mut interrupt_receiver: Receiver<boo
                     break
                 }
                 Ok(None) => {
-                    // interrupt channel is closed; try to keep running if possible
+                    // interrupt channel is closed; something is wrong
+                    // TODO: Try to reconnect if it makes sense
                     tracing::error!("Interrupt channel closed unexpectedly");
+                    break
                 }
                 _ => ()
             }
 
-            match read_next_message(&mut tcp_stream).await {
-                Ok(message) => {
-                    match message.payload {
-                        None => continue,
-                        Some(payload) => yield payload.data.unwrap_or(Vec::new())
+            match timeout(Duration::from_secs(5), read_next_message(&mut tcp_stream)).await {
+                Ok(read_result) => {
+                    match read_result {
+                        Ok(message) => {
+                            tracing::debug!("Read a message {:?}", message);
+                            match message.payload {
+                                None => continue,
+                                Some(payload) => yield payload.data.unwrap_or(Vec::new())
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error reading console message: {:?}", e);
+                            break
+                        }
                     }
                 }
-                Err(e) => {
-                    tracing::error!("Error reading console message: {:?}", e);
+                Err(_) => {
+                    // TODO: Reconnect instead
+                    tracing::error!("Timeout receiving next message");
                     break
                 }
             }
