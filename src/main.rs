@@ -1,13 +1,13 @@
-use std::{error::Error, net::{Ipv4Addr, SocketAddr}, path::Path, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::Parser;
-use futures::{channel::mpsc::channel, future, SinkExt, StreamExt};
+use futures::{channel::mpsc::channel, future, StreamExt};
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
 use url::{Host, Url};
 
-use crate::{common::SlippiDataStream, slp_file_writer::SlpStreamEvent};
+use crate::{common::SlippiDataStream};
 use crate::slp_file_writer::SlpFileWriter;
 
 mod broadcast;
@@ -19,6 +19,7 @@ mod common;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about)]
 struct Args {
+    /// Don't attempt to auto-update.
     #[arg(long)]
     skip_update: bool,
 
@@ -31,6 +32,11 @@ struct Args {
     #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
 
+    /// Mirror in playback Dolphin from the specified WebSocket source.
+    #[arg(short, long)]
+    mirror: Option<String>,
+
+    /// Log debug messages.
     #[arg(short, long, action)]
     verbose: bool
 }
@@ -75,7 +81,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
+            if let Some(mirror_source) = &args.mirror {
+                mirror_to_dolphin(mirror_source).await;
+            } else {
+                connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
+            }
         });
 
     println!("\nGoodbye!");
@@ -86,8 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn mirror_to_dolphin(stream_url: &str) {
     let (mut interrupt_sender, interrupt_receiver) = channel::<bool>(100);
     let stream_conn = spectate::websocket_connection::data_stream(stream_url, interrupt_receiver).await;
-    let file_writer = SlpFileWriter::new();
-    spectate::playback_dolphin::launch_playback_dolphin();
+    let mut playback_writer = SlpFileWriter::new("/Users/graham.preston/SpectatorMode".to_string(), true);
     
     let mut already_interrupted = false;
     ctrlc::set_handler(move || {
@@ -95,27 +104,15 @@ async fn mirror_to_dolphin(stream_url: &str) {
             std::process::exit(2);
         } else {
             already_interrupted = true;
-            interrupt_sender.send(true);
+            interrupt_sender.try_send(true).unwrap();
         }
     })
     .unwrap();
 
-    let _: Vec<()> =
-        stream_conn.map(|data| {
-            // This is assuming that no events are split between stream items
-            let events = file_writer.write(data);
-
-            for event in events {
-                match event {
-                    SlpStreamEvent::StartGame(fp) => {
-                        spectate::playback_dolphin::mirror_file(fp);
-                    }
-                    SlpStreamEvent::EndGame => {
-                        // don't actually think i need to do anything here
-                    }
-                }
-            }
-        }).collect().await;
+    stream_conn.map(|data| {
+        // This is assuming that no events are split between stream items
+        playback_writer.write_all(&data).unwrap();
+    }).collect::<()>().await;
 
     spectate::playback_dolphin::close_playback_dolphin();
 }
