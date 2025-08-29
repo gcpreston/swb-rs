@@ -9,10 +9,8 @@ use url::{Host, Url};
 
 use crate::common::SlippiDataStream;
 
-mod dolphin_connection;
-mod console_connection;
+mod broadcast;
 mod spectator_mode_client;
-mod connection_manager;
 mod common;
 
 #[derive(Parser, Debug)]
@@ -140,8 +138,8 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let merged_stream = connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
-    let dolphin_to_sm = connection_manager::forward_slippi_data(merged_stream, sm_client);
+    let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
+    let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
     let extended_sm_client_future = async {
         let result = sm_client_future.await;
         slippi_interrupts_clone.lock().unwrap().iter_mut().for_each(|interrupt| interrupt());
@@ -162,9 +160,9 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     tracing::info!("Connecting to Slippi {} at {}...", if is_console { "console" } else { "Dolphin" }, source_addr);
     let conn  =
         if is_console {
-            console_connection::data_stream(source_addr, receiver).await
+            broadcast::console_connection::data_stream(source_addr, receiver).await
         } else {
-            dolphin_connection::data_stream(source_addr, receiver).await
+            broadcast::dolphin_connection::data_stream(source_addr, receiver).await
         };
 
     let interruptor_to_return = move || {
