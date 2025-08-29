@@ -1,16 +1,19 @@
-use std::{error::Error, net::{Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, net::{Ipv4Addr, SocketAddr}, path::Path, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::Parser;
-use futures::{channel::mpsc::channel, future};
+use futures::{channel::mpsc::channel, future, SinkExt, StreamExt};
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
 use url::{Host, Url};
 
-use crate::common::SlippiDataStream;
+use crate::{common::SlippiDataStream, slp_file_writer::SlpStreamEvent};
+use crate::slp_file_writer::SlpFileWriter;
 
 mod broadcast;
+mod spectate;
 mod spectator_mode_client;
+mod slp_file_writer;
 mod common;
 
 #[derive(Parser, Debug)]
@@ -78,6 +81,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nGoodbye!");
 
     Ok(())
+}
+
+async fn mirror_to_dolphin(stream_url: &str) {
+    let (mut interrupt_sender, interrupt_receiver) = channel::<bool>(100);
+    let stream_conn = spectate::websocket_connection::data_stream(stream_url, interrupt_receiver).await;
+    let file_writer = SlpFileWriter::new();
+    spectate::playback_dolphin::launch_playback_dolphin();
+    
+    let mut already_interrupted = false;
+    ctrlc::set_handler(move || {
+        if already_interrupted {
+            std::process::exit(2);
+        } else {
+            already_interrupted = true;
+            interrupt_sender.send(true);
+        }
+    })
+    .unwrap();
+
+    let _: Vec<()> =
+        stream_conn.map(|data| {
+            // This is assuming that no events are split between stream items
+            let events = file_writer.write(data);
+
+            for event in events {
+                match event {
+                    SlpStreamEvent::StartGame(fp) => {
+                        spectate::playback_dolphin::mirror_file(fp);
+                    }
+                    SlpStreamEvent::EndGame => {
+                        // don't actually think i need to do anything here
+                    }
+                }
+            }
+        }).collect().await;
+
+    spectate::playback_dolphin::close_playback_dolphin();
 }
 
 async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {
