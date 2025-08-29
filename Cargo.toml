@@ -25,5 +25,4 @@ async-channel = "2.5.0"
 byteorder = "1.5.0"
 ubjson-rs = { git = "https://github.com/gcpreston/ubjson_rs.git" }
 async-stream = "0.3.6"
-peppi = "2.1.1"
 chrono = "0.4.41"
