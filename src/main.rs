@@ -1,6 +1,6 @@
-use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use futures::{channel::mpsc::channel, future, StreamExt};
 use spectator_mode_client::WSError;
 use tracing::Level;
@@ -17,12 +17,30 @@ mod slp_file_writer;
 mod common;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about)]
-struct Args {
+#[command(author, version, about, long_about)]
+#[command(propagate_version = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
     /// Don't attempt to auto-update.
-    #[arg(long)]
+    #[arg(long, global = true)]
     skip_update: bool,
 
+    /// Log debug messages.
+    #[arg(short, long, action, global = true)]
+    verbose: bool
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Broadcast(Broadcast),
+    Spectate(Spectate)
+}
+
+/// Stream one or multiple Slippi instances to SpectatorMode. 
+#[derive(Args, Debug)]
+struct Broadcast {
     /// The SpectatorMode WebSocket endpoint to connect and forward data to.
     #[arg(short, long, default_value = "wss://spectatormode.tv/bridge_socket/websocket")]
     dest: String,
@@ -31,14 +49,34 @@ struct Args {
     /// schema may be "console" or "dolphin". Multiple may be specified.
     #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
+}
 
-    /// Mirror in playback Dolphin from the specified WebSocket source.
-    #[arg(short, long)]
-    mirror: Option<String>,
+/// Mirror a stream in Playback Dolphin. This can consume a stream either from
+/// SpectatorMode, or from an arbitrary source.
+/// 
+/// If an arbitrary source is provided, swb expects it to be a WebSocket server 
+/// which (1) sends the entire .slp replay up to the current point upon 
+/// connection, and (2) sends Slippi events as they come in after connection.
+/// 
+/// Messages must be sent from the server in binary mode as unwrapped Slippi
+/// events. One message may contain multiple Slippi events, but a Slippi event
+/// must not be split between multiple messages.
+#[derive(Args, Debug)]
+struct Spectate {
+    /// The stream identifier. This can either be the stream ID from
+    /// SpectatorMode, or a full WebSocket URL to the source.
+    #[arg(value_parser = infer_stream_url)]
+    stream_url: String
+}
 
-    /// Log debug messages.
-    #[arg(short, long, action)]
-    verbose: bool
+fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
+    if let Ok(_url) = Url::parse(stream_param) {
+        return Ok(stream_param.to_string());
+    }
+    
+    let stream_id = u32::from_str(stream_param)? ;
+    let sm_url = format!("wss://spectatormode.tv/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id);
+    Ok(sm_url)
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -57,7 +95,8 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+    let args = Cli::parse();
+    println!("parsed args {:?}", args);
 
     if !args.skip_update {
         let update_status = update_if_needed()?;
@@ -81,10 +120,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            if let Some(mirror_source) = &args.mirror {
-                mirror_to_dolphin(mirror_source).await;
-            } else {
-                connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
+            match &args.command {
+                Commands::Broadcast(b) => {
+                    connect_and_forward_packets_until_completion(&b.source, b.dest.as_str()).await;
+                }
+                Commands::Spectate(s) => {
+                    mirror_to_dolphin(s.stream_url.as_str()).await;
+                }
             }
         });
 
