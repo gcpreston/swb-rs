@@ -13,8 +13,7 @@ use crate::common::SlippiDataStream;
 pub async fn data_stream(address: &str) -> Pin<Box<SlippiDataStream>> {
     tracing::info!("Connecting to SpectatorMode...");
     let request = address.into_client_request().unwrap();
-    let (stream, response) = connect_async(request).await.unwrap();
-    println!("connect response {:?}", response);
+    let (stream, _response) = connect_async(request).await.unwrap();
     tracing::info!("Connected to SpectatorMode.");
 
     Box::pin(stream! {
