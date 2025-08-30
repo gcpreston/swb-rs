@@ -16,7 +16,6 @@ type PayloadSizes = HashMap<u8, u16>;
 pub(crate) struct SlpFileWriter {
     replay_directory: String,
     mirror_in_dolphin: bool,
-    command_number: u32,
     current_file: Option<File>,
     payload_sizes: Option<PayloadSizes>,
 }
@@ -30,7 +29,6 @@ impl SlpFileWriter {
         SlpFileWriter {
             replay_directory: replay_directory,
             mirror_in_dolphin: mirror_in_dolphin,
-            command_number: 0,
             current_file: None,
             payload_sizes: None,
         }
@@ -109,6 +107,7 @@ impl Write for SlpFileWriter {
 }
 
 #[repr(u8)]
+#[expect(unused)]
 pub enum Event {
     MessageSplitter = 0x10,
     Payloads = 0x35,
