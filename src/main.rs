@@ -94,9 +94,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn mirror_to_dolphin(stream_url: &str) {
-    let (mut interrupt_sender, interrupt_receiver) = channel::<bool>(100);
-    let stream_conn = spectate::websocket_connection::data_stream(stream_url, interrupt_receiver).await;
-    // let mut playback_writer = SlpFileWriter::new("/Users/graham.preston/SpectatorMode".to_string(), true);
+    // let (mut interrupt_sender, interrupt_receiver) = channel::<bool>(100);
+    let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
+    let mut playback_writer = SlpFileWriter::new("/Users/graham.preston/SpectatorMode".to_string(), true);
     
     // let mut already_interrupted = false;
     // ctrlc::set_handler(move || {
@@ -109,12 +109,12 @@ async fn mirror_to_dolphin(stream_url: &str) {
     // })
     // .unwrap();
 
-    // stream_conn.map(|data| {
-    //     // This is assuming that no events are split between stream items
-    //     playback_writer.write_all(&data).unwrap();
-    // }).collect::<()>().await;
+    stream_conn.map(|data| {
+        // This is assuming that no events are split between stream items
+        playback_writer.write_all(&data).unwrap();
+    }).collect::<()>().await;
 
-    // spectate::playback_dolphin::close_playback_dolphin();
+    spectate::playback_dolphin::close_playback_dolphin();
 }
 
 async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {

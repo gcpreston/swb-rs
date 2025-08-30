@@ -37,9 +37,10 @@ impl SlpFileWriter {
     }
 
     fn read_next_event<R: Read>(&mut self, mut data: R) -> std::io::Result<usize> {
+        // so payload sizes might be send 
         match &self.payload_sizes {
             None => {
-                let (bytes_read, payload_sizes) = parse_payloads(data).unwrap();
+                let (bytes_read, payload_sizes) = parse_payloads(data)?;
                 self.payload_sizes = Some(payload_sizes);
                 Ok(bytes_read)
             }
@@ -47,12 +48,10 @@ impl SlpFileWriter {
                 let command = data.read_u8()?;
                 let command_size = payload_sizes.get(&command).unwrap().to_owned();
                 let mut read_buf = vec![0 as u8; command_size as usize];
-                data.read_exact(&mut read_buf);
-                Ok(command_size as usize)
+                data.read_exact(&mut read_buf).unwrap();
+                Ok((command_size + 1) as usize) // include command byte in read size
             }
         }
-
-        // TODO: Update
     }
 
     fn write_payload(&mut self, data: &[u8]) -> std::io::Result<usize> {
@@ -93,6 +92,7 @@ impl Write for SlpFileWriter {
                     // game end
                     bytes_written += self.write_payload(event_data)?;
                     self.current_file = None;
+                    self.payload_sizes = None;
                 }
                 _ => {
                     bytes_written += self.write_payload(event_data)?;
