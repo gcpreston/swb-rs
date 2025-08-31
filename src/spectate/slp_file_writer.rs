@@ -8,26 +8,24 @@ use std::{
 use byteorder::{BE, ReadBytesExt};
 use chrono::{DateTime, Local};
 
-use crate::spectate::playback_dolphin;
+use crate::{config, spectate::playback_dolphin};
 
 type PayloadSizes = HashMap<u8, u16>;
 
 // TODO: New name since this is really a full dolphin mirror manager
 pub(crate) struct SlpFileWriter {
-    replay_directory: String,
     mirror_in_dolphin: bool,
     current_file: Option<File>,
     payload_sizes: Option<PayloadSizes>,
 }
 
 impl SlpFileWriter {
-    pub(crate) fn new(replay_directory: String, mirror_in_dolphin: bool) -> SlpFileWriter {
+    pub(crate) fn new(mirror_in_dolphin: bool) -> SlpFileWriter {
         if mirror_in_dolphin {
             playback_dolphin::launch_playback_dolphin();
         }
         
         SlpFileWriter {
-            replay_directory: replay_directory,
             mirror_in_dolphin: mirror_in_dolphin,
             current_file: None,
             payload_sizes: None,
@@ -77,7 +75,8 @@ impl Write for SlpFileWriter {
                     let current_local: DateTime<Local> = Local::now();
                     let dt = current_local.format("%Y%m%d%H%M%S");
                     let filename = format!("Game_{}.slp", dt);
-                    let fp = Path::new(&self.replay_directory).join(filename.clone());
+                    let config = config::get_application_config();
+                    let fp = Path::new(&config.spectate_replay_directory_path()).join(filename.clone());
                     self.current_file = Some(File::create(&fp).unwrap());
 
                     if self.mirror_in_dolphin {

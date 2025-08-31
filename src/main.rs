@@ -5,6 +5,7 @@ use futures::{channel::mpsc::channel, future, StreamExt};
 use spectator_mode_client::WSError;
 use tracing::Level;
 use self_update::cargo_crate_version;
+// use tokio::sync::mpsc;
 use url::{Host, Url};
 
 use crate::{common::SlippiDataStream};
@@ -14,6 +15,7 @@ mod broadcast;
 mod spectate;
 mod spectator_mode_client;
 mod common;
+mod config;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about)]
@@ -135,9 +137,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn mirror_to_dolphin(stream_url: &str) {
-    // let (mut interrupt_sender, interrupt_receiver) = channel::<bool>(100);
+    // let (interrupt_sender, mut interrupt_receiver) = mpsc::channel::<bool>(100);
     let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
-    let mut playback_writer = SlpFileWriter::new("/Users/graham.preston/SpectatorMode".to_string(), true);
+    let mut playback_writer = SlpFileWriter::new(true);
     
     // let mut already_interrupted = false;
     // ctrlc::set_handler(move || {
