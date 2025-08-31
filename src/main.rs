@@ -8,12 +8,11 @@ use self_update::cargo_crate_version;
 use url::{Host, Url};
 
 use crate::{common::SlippiDataStream};
-use crate::slp_file_writer::SlpFileWriter;
+use crate::spectate::slp_file_writer::SlpFileWriter;
 
 mod broadcast;
 mod spectate;
 mod spectator_mode_client;
-mod slp_file_writer;
 mod common;
 
 #[derive(Parser, Debug)]
