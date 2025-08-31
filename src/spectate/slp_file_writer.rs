@@ -76,7 +76,7 @@ impl Write for SlpFileWriter {
                     let dt = current_local.format("%Y%m%d%H%M%S");
                     let filename = format!("Game_{}.slp", dt);
                     let config = config::get_application_config();
-                    let fp = Path::new(&config.spectate_replay_directory_path()).join(filename.clone());
+                    let fp = Path::new(&config.get_spectate_replay_directory_path().unwrap()).join(filename.clone());
                     self.current_file = Some(File::create(&fp).unwrap());
 
                     if self.mirror_in_dolphin {
