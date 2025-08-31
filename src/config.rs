@@ -56,14 +56,16 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 #[derive(Deserialize)]
-struct SettingsFile {
-    settings: Settings,
+struct SlippiLauncherSettingsFile {
+    settings: SlippiLauncherSettings,
 }
 
 #[derive(Deserialize)]
-struct Settings {
+struct SlippiLauncherSettings {
     #[serde(rename = "isoPath")]
     iso_path: String,
+    #[serde(rename = "rootSlpPath")]
+    root_slp_path: String,
 }
 
 #[derive(Deserialize, Serialize, Default)]
@@ -125,10 +127,22 @@ impl Config {
         let settings_content = fs::read_to_string(&settings_path)
             .map_err(|e| ConfigError::FileRead(settings_path.clone(), e))?;
 
-        let settings: SettingsFile = serde_json::from_str(&settings_content)
+        let settings: SlippiLauncherSettingsFile = serde_json::from_str(&settings_content)
             .map_err(|e| ConfigError::JsonParse(settings_path, e))?;
 
         Ok(settings.settings.iso_path)
+    }
+
+    /// Get the root SLP path from Slippi Launcher settings.
+    fn root_slp_path(&self) -> Result<String, ConfigError> {
+        let launcher_settings_path = self.config_path().join("Settings");
+        let launcher_settings_content = fs::read_to_string(&launcher_settings_path)
+            .map_err(|e| ConfigError::FileRead(launcher_settings_path.clone(), e))?;
+
+        let launcher_settings: SlippiLauncherSettingsFile = serde_json::from_str(&launcher_settings_content)
+            .map_err(|e| ConfigError::JsonParse(launcher_settings_path, e))?;
+
+        Ok(launcher_settings.settings.root_slp_path)
     }
 
     // TODO: All these are starting to feel more and more like functions rather
@@ -175,30 +189,41 @@ impl Config {
     // TODO: Smooth errors for spectate operations when directory isn't yet set
 
     /// Fetch the path to download replays to which are being spectated.
+    /// If not explicitly set, defaults to rootSlpPath + "Spectate" from Slippi Launcher settings
+    /// and saves this default to the settings file.
     pub(crate) fn get_spectate_replay_directory_path(&self) -> Result<String, ConfigError> {
         let settings_path = self.config_path().join(SETTINGS_FILE_NAME);
 
-        if !settings_path.exists() {
-            return Err(ConfigError::FileRead(
-                settings_path,
-                io::Error::new(io::ErrorKind::NotFound, "Settings file does not exist"),
-            ));
+        // Try to read existing spectate settings
+        let spectate_directory = if settings_path.exists() {
+            let content = fs::read_to_string(&settings_path)
+                .map_err(|e| ConfigError::FileRead(settings_path.clone(), e))?;
+
+            if !content.trim().is_empty() {
+                let settings: SpectateSettings = serde_json::from_str(&content)
+                    .map_err(|e| ConfigError::JsonParse(settings_path, e))?;
+                settings.spectate_directory
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // If spectate directory is set, use it; otherwise use default and save it
+        match spectate_directory {
+            Some(dir) => Ok(dir),
+            None => {
+                // Use default: rootSlpPath + "Spectate"
+                let root_slp_path = self.root_slp_path()?;
+                let default_path = PathBuf::from(root_slp_path).join("Spectate");
+                let default_path_str = default_path.to_string_lossy().to_string();
+
+                // Save the default path to settings
+                self.set_spectate_replay_directory_path(default_path_str.clone())?;
+
+                Ok(default_path_str)
+            }
         }
-
-        let content = fs::read_to_string(&settings_path)
-            .map_err(|e| ConfigError::FileRead(settings_path.clone(), e))?;
-
-        let settings: SpectateSettings = serde_json::from_str(&content)
-            .map_err(|e| ConfigError::JsonParse(settings_path.clone(), e))?;
-
-        settings.spectate_directory.ok_or_else(|| {
-            ConfigError::FileRead(
-                settings_path,
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "spectate_directory not set in settings",
-                ),
-            )
-        })
     }
 }
