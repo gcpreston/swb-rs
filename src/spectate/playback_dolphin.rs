@@ -20,7 +20,7 @@ pub(crate) fn launch_playback_dolphin() {
 
     let config = config::get_application_config();
     Command::new(config.playback_dolphin_path())
-        .args(["-e", config.iso_path().as_str(), "-i", config.comm_spec_path().to_str().unwrap()])
+        .args(["-e", &config.iso_path().unwrap(), "-i", config.comm_spec_path().to_str().unwrap()])
         .spawn()
         .expect("failed to execute command");
 }
