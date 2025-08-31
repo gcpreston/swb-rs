@@ -19,6 +19,7 @@ pub(crate) fn launch_playback_dolphin() {
     write_comm_spec(spec);
 
     let config = config::get_application_config();
+
     Command::new(config.playback_dolphin_path())
         .args(["-e", &config.iso_path().unwrap(), "-i", config.comm_spec_path().to_str().unwrap()])
         .spawn()

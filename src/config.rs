@@ -97,6 +97,10 @@ impl Config {
         config_path
     }
 
+    fn slippi_launcher_config_path(&self) -> PathBuf {
+        self.config_path().join("../Slippi Launcher")
+    }
+
     pub(crate) fn comm_spec_path(&self) -> PathBuf {
         let temp_path = self.config_path().join("temp");
         if !temp_path.exists() {
@@ -110,7 +114,7 @@ impl Config {
     }
 
     pub(crate) fn playback_dolphin_path(&self) -> PathBuf {
-        let playback_path = self.config_path().join("playback");
+        let playback_path = self.slippi_launcher_config_path().join("playback");
 
         // https://github.com/jmlee337/auto-slp-player/blob/bb8fe89370ae7d5d7e954a07e7437f3e2a1da1e5/src/main/ipc.ts#L207
         match std::env::consts::OS {
@@ -123,7 +127,7 @@ impl Config {
 
     /// Fetch the path to the ISO stored in Slippi Launcher's settings.
     pub(crate) fn iso_path(&self) -> Result<String, ConfigError> {
-        let settings_path = self.config_path().join("Settings");
+        let settings_path = self.slippi_launcher_config_path().join("Settings");
         let settings_content = fs::read_to_string(&settings_path)
             .map_err(|e| ConfigError::FileRead(settings_path.clone(), e))?;
 
@@ -135,7 +139,7 @@ impl Config {
 
     /// Get the root SLP path from Slippi Launcher settings.
     fn root_slp_path(&self) -> Result<String, ConfigError> {
-        let launcher_settings_path = self.config_path().join("Settings");
+        let launcher_settings_path = self.slippi_launcher_config_path().join("Settings");
         let launcher_settings_content = fs::read_to_string(&launcher_settings_path)
             .map_err(|e| ConfigError::FileRead(launcher_settings_path.clone(), e))?;
 
