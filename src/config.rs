@@ -101,7 +101,8 @@ pub(crate) fn get_application_config() -> Config {
 
 impl Config {
     fn config_path(&self) -> &Path {
-        let config_path = self.project_dirs.config_dir(); // TODO: On windows this probably is not quite right
+        let config_path = self.project_dirs.config_dir();
+        
         if !config_path.exists() {
             fs::create_dir_all(config_path).unwrap();
         }
@@ -109,7 +110,16 @@ impl Config {
     }
 
     fn slippi_launcher_config_path(&self) -> PathBuf {
-        self.config_path().join("../Slippi Launcher")
+        // On Windows, the actual config path as set by the directories library
+        // has an extra \config directory appended, which Mac and Linux don't
+        // have. This logic allows us to navigate correctly.
+        let join_path = 
+            if std::env::consts::OS == "windows" {
+               "../../Slippi Launcher"
+            } else {
+                "../Slippi Launcher"
+            };
+        self.config_path().join(join_path)
     }
 
     pub(crate) fn comm_spec_path(&self) -> PathBuf {
