@@ -48,7 +48,8 @@ struct Broadcast {
     dest: String,
 
     /// Slippi sources to forward data from, in the format schema://host:port.
-    /// schema may be "console" or "dolphin". Multiple may be specified.
+    /// schema may be "console" or "dolphin", and defaults to "console" if 
+    /// unspecified. Multiple sources may be given.
     #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
 }

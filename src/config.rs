@@ -1,11 +1,11 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
-    io,
-    path::{Path, PathBuf},
+    fs::{self, File}, io, path::{Path, PathBuf}
 };
+// use thiserror::Error;
 
+// TODO: Change to thiserror definition as appropriate
 #[derive(Debug)]
 pub(crate) enum ConfigError {
     FileRead(PathBuf, io::Error),
@@ -13,6 +13,9 @@ pub(crate) enum ConfigError {
     JsonParse(PathBuf, serde_json::Error),
     JsonSerialize(PathBuf, serde_json::Error),
     PlatformError(String),
+
+    // #[error("Error decoding path: {0}")]
+    // PathDecodeError(#[from] OsString),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -200,7 +203,7 @@ impl Config {
     /// Fetch the path to download replays to which are being spectated.
     /// If not explicitly set, defaults to rootSlpPath + "Spectate" from Slippi Launcher settings
     /// and saves this default to the settings file.
-    pub(crate) fn get_spectate_replay_directory_path(&self) -> Result<String, ConfigError> {
+    pub(crate) fn get_spectate_replay_directory_path(&self) -> Result<PathBuf, ConfigError> {
         let settings_path = self.config_path().join(SETTINGS_FILE_NAME);
 
         // Try to read existing spectate settings
@@ -221,17 +224,16 @@ impl Config {
 
         // If spectate directory is set, use it; otherwise use default and save it
         match spectate_directory {
-            Some(dir) => Ok(dir),
+            Some(dir) => Ok(PathBuf::from(dir)),
             None => {
                 // Use default: rootSlpPath + "Spectate"
                 let root_slp_path = self.root_slp_path()?;
                 let default_path = PathBuf::from(root_slp_path).join("Spectate");
-                let default_path_str = default_path.to_string_lossy().to_string();
 
                 // Save the default path to settings
-                self.set_spectate_replay_directory_path(default_path_str.clone())?;
+                self.set_spectate_replay_directory_path(default_path.clone().into_os_string().into_string().unwrap())?;
 
-                Ok(default_path_str)
+                Ok(default_path)
             }
         }
     }
