@@ -1,4 +1,4 @@
-use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, io::Write, net::{AddrParseError, Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::{Args, Parser, Subcommand};
 use futures::{channel::mpsc::channel, future, StreamExt};
@@ -87,6 +87,15 @@ fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
 pub(crate) enum SwbError {
     #[error("Config error: {0}")]
     ConfigError(#[from] ConfigError),
+
+    #[error("Error parsing socket address: {0}")]
+    SocketAddrParseError(#[from] AddrParseError),
+
+    #[error("URL parse error: {0}")]
+    URLParseError(#[from] url::ParseError),
+
+    #[error("Unknown source scheme: {0}")]
+    UnknownSourceScheme(String),
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -185,13 +194,13 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     let mut already_interrupted = false;
 
     for source_string in sources_owned {
-        let string_to_parse =
+        let string_to_parse = 
             if !source_string.contains("://") {
                 format!("{}{}", "console://", source_string)
             } else {
                 source_string
             };
-        let parsed_url = Url::parse(string_to_parse.as_str()).expect("Invalid URL scheme");
+        let parsed_url = Url::parse(string_to_parse.as_str())?;
 
         let scheme = parsed_url.scheme();
         let host = parsed_url.host().unwrap_or(Host::Ipv4(Ipv4Addr::from_str("127.0.0.1").unwrap()));
@@ -200,16 +209,13 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
         tracing::debug!("using url scheme: {:?}, host: {:?}, port: {:?}", scheme, host, port);
 
         let socket_addr_string = format!("{}:{}", host, port);
-        let source_addr = SocketAddr::from_str(socket_addr_string.as_str()).expect("Invalid socket address");
+        let source_addr = SocketAddr::from_str(socket_addr_string.as_str())?;
         let is_console =
             match scheme {
-                "console" => true,
-                "dolphin" => false,
-                _ => {
-                    tracing::error!("Invalid Slippi platform scheme");
-                    return Ok(());
-                }
-            };
+                "console" => Ok(true),
+                "dolphin" => Ok(false),
+                other_scheme => Err(SwbError::UnknownSourceScheme(other_scheme.to_string()))
+            }?;
 
         let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, is_console).await;
         slippi_conns.push(slippi_conn);
@@ -263,6 +269,7 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
         } else {
             broadcast::dolphin_connection::data_stream(source_addr, receiver).await
         };
+    tracing::info!("Connected to Slippi.");
 
     let interruptor_to_return = move || {
         match other_sender.try_send(true) {
