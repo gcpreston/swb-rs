@@ -3,12 +3,13 @@ use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, num::ParseIntErr
 use clap::{Args, Parser, Subcommand};
 use futures::{channel::mpsc::channel, future, StreamExt};
 use spectator_mode_client::WSError;
+use thiserror::Error;
 use tracing::Level;
 use self_update::cargo_crate_version;
 // use tokio::sync::mpsc;
 use url::{Host, Url};
 
-use crate::{common::SlippiDataStream};
+use crate::{common::SlippiDataStream, config::ConfigError};
 use crate::spectate::slp_file_writer::SlpFileWriter;
 
 mod broadcast;
@@ -80,6 +81,13 @@ fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
     Ok(sm_url)
 }
 
+// TODO: Coerce various specific errors into user-friendly high-level errors
+#[derive(Error, Debug)]
+pub(crate) enum SwbError {
+    #[error("Config error: {0}")]
+    ConfigError(#[from] ConfigError),
+}
+
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
     let status = self_update::backends::github::Update::configure()
         .repo_owner("gcpreston")
@@ -121,13 +129,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            match &args.command {
-                Commands::Broadcast(b) => {
-                    connect_and_forward_packets_until_completion(&b.source, b.dest.as_str()).await;
-                }
-                Commands::Spectate(s) => {
-                    mirror_to_dolphin(s.stream_url.as_str()).await;
-                }
+            let result = 
+                match &args.command {
+                    Commands::Broadcast(b) => {
+                        connect_and_forward_packets_until_completion(&b.source, b.dest.as_str()).await
+                    }
+                    Commands::Spectate(s) => {
+                        mirror_to_dolphin(s.stream_url.as_str()).await
+                    }
+                };
+
+            if let Err(err) = result {
+                tracing::error!("{}", err);
             }
         });
 
@@ -136,10 +149,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn mirror_to_dolphin(stream_url: &str) {
+async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
     // let (interrupt_sender, mut interrupt_receiver) = mpsc::channel::<bool>(100);
     let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
-    let mut playback_writer = SlpFileWriter::new(true);
+    let mut playback_writer = SlpFileWriter::new(true)?;
     
     // let mut already_interrupted = false;
     // ctrlc::set_handler(move || {
@@ -158,9 +171,12 @@ async fn mirror_to_dolphin(stream_url: &str) {
     }).collect::<()>().await;
 
     spectate::playback_dolphin::close_playback_dolphin();
+
+    Ok(())
 }
 
-async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {
+// TODO: Bubble existing errors
+async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) -> Result<(), SwbError>  {
     // Initiate connections.
     let mut slippi_conns = vec![];
     let mut slippi_interrupts = vec![];
@@ -190,7 +206,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
                 "dolphin" => false,
                 _ => {
                     tracing::error!("Invalid Slippi platform scheme");
-                    return;
+                    return Ok(());
                 }
             };
 
@@ -231,6 +247,8 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
 
     log_forward_result(slippi_to_sm_result);
     log_sm_client_result(sm_client_result);
+
+    Ok(())
 }
 
 async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Box<SlippiDataStream>>, impl FnMut()) {

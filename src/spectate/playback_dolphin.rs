@@ -3,7 +3,7 @@ use std::{fs::File, path::PathBuf, process::Command};
 use serde::{Deserialize, Serialize};
 use rand::{distr::Alphanumeric, Rng};
 
-use crate::config;
+use crate::config::{self, ConfigError};
 
 #[derive(Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -14,16 +14,18 @@ struct CommSpec {
     replay: Option<String>
 }
 
-pub(crate) fn launch_playback_dolphin() {
+pub(crate) fn launch_playback_dolphin() -> Result<(), ConfigError> {
     let spec = CommSpec { mode: "mirror".to_string(), commandId: "0".to_string(), replay: None };
     write_comm_spec(spec);
 
     let config = config::get_application_config();
 
-    Command::new(config.playback_dolphin_path())
+    Command::new(config.playback_dolphin_path()?)
         .args(["-e", &config.iso_path().unwrap(), "-i", config.comm_spec_path().to_str().unwrap()])
         .spawn()
         .expect("failed to execute command");
+
+    Ok(())
 }
 
 pub(crate) fn mirror_file(fp: PathBuf) {

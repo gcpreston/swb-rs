@@ -1,35 +1,39 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Read, Write, Error, ErrorKind},
-    path::Path,
+    io::{BufReader, Error, ErrorKind, Read, Write},
+    path::PathBuf,
 };
 
 use byteorder::{BE, ReadBytesExt};
 use chrono::{DateTime, Local};
 
-use crate::{config, spectate::playback_dolphin};
+use crate::{config::{self, ConfigError}, spectate::playback_dolphin};
 
 type PayloadSizes = HashMap<u8, u16>;
 
 // TODO: New name since this is really a full dolphin mirror manager
 pub(crate) struct SlpFileWriter {
     mirror_in_dolphin: bool,
+    spectate_directory_path: PathBuf,
     current_file: Option<File>,
     payload_sizes: Option<PayloadSizes>,
 }
 
 impl SlpFileWriter {
-    pub(crate) fn new(mirror_in_dolphin: bool) -> SlpFileWriter {
+    pub(crate) fn new(mirror_in_dolphin: bool) -> Result<SlpFileWriter, ConfigError> {
         if mirror_in_dolphin {
-            playback_dolphin::launch_playback_dolphin();
+            playback_dolphin::launch_playback_dolphin()?;
         }
+
+        let config = config::get_application_config();
         
-        SlpFileWriter {
+        Ok(SlpFileWriter {
             mirror_in_dolphin: mirror_in_dolphin,
+            spectate_directory_path: config.get_spectate_replay_directory_path()?,
             current_file: None,
             payload_sizes: None,
-        }
+        })
     }
 
     fn read_next_event<R: Read>(&mut self, mut data: R) -> std::io::Result<usize> {
@@ -75,8 +79,7 @@ impl Write for SlpFileWriter {
                     let current_local: DateTime<Local> = Local::now();
                     let dt = current_local.format("%Y%m%d%H%M%S");
                     let filename = format!("Game_{}.slp", dt);
-                    let config = config::get_application_config();
-                    let fp = Path::new(&config.get_spectate_replay_directory_path().unwrap()).join(filename.clone());
+                    let fp = self.spectate_directory_path.join(filename.clone());
                     self.current_file = Some(File::create(&fp).unwrap());
 
                     if self.mirror_in_dolphin {
