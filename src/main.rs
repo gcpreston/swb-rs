@@ -229,6 +229,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
         if already_interrupted {
             std::process::exit(2);
         } else {
+            tracing::info!("Shutting down gracefully... press Ctrl + C again to force exit.");
             already_interrupted = true;
             for interrupt in slippi_interrupts.lock().unwrap().iter_mut() {
                 interrupt();
