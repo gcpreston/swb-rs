@@ -1,37 +1,92 @@
-use std::{error::Error, net::{Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
-use clap::Parser;
-use futures::{channel::mpsc::channel, future};
+use clap::{Args, Parser, Subcommand};
+use futures::{channel::mpsc::channel, future, StreamExt};
 use spectator_mode_client::WSError;
+use thiserror::Error;
 use tracing::Level;
 use self_update::cargo_crate_version;
+// use tokio::sync::mpsc;
 use url::{Host, Url};
 
-use crate::common::SlippiDataStream;
+use crate::{common::SlippiDataStream, config::ConfigError};
+use crate::spectate::slp_file_writer::SlpFileWriter;
 
-mod dolphin_connection;
-mod console_connection;
+mod broadcast;
+mod spectate;
 mod spectator_mode_client;
-mod connection_manager;
 mod common;
+mod config;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about)]
-struct Args {
-    #[arg(long)]
+#[command(author, version, about, long_about)]
+#[command(propagate_version = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    /// Don't attempt to auto-update.
+    #[arg(long, global = true)]
     skip_update: bool,
 
+    /// Log debug messages.
+    #[arg(short, long, action, global = true)]
+    verbose: bool
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Broadcast(Broadcast),
+    Spectate(Spectate)
+}
+
+/// Stream one or multiple Slippi instances to SpectatorMode. 
+#[derive(Args, Debug)]
+struct Broadcast {
     /// The SpectatorMode WebSocket endpoint to connect and forward data to.
     #[arg(short, long, default_value = "wss://spectatormode.tv/bridge_socket/websocket")]
     dest: String,
 
     /// Slippi sources to forward data from, in the format schema://host:port.
-    /// schema may be "console" or "dolphin". Multiple may be specified.
+    /// schema may be "console" or "dolphin", and defaults to "console" if 
+    /// unspecified. Multiple sources may be given.
     #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
+}
 
-    #[arg(short, long, action)]
-    verbose: bool
+/// Mirror a stream in Playback Dolphin. This can consume a stream either from
+/// SpectatorMode, or from an arbitrary source.
+/// 
+/// If an arbitrary source is provided, swb expects it to be a WebSocket server 
+/// which (1) sends the entire .slp replay up to the current point upon 
+/// connection, and (2) sends Slippi events as they come in after connection.
+/// 
+/// Messages must be sent from the server in binary mode as unwrapped Slippi
+/// events. One message may contain multiple Slippi events, but a Slippi event
+/// must not be split between multiple messages.
+#[derive(Args, Debug)]
+struct Spectate {
+    /// The stream identifier. This can either be the stream ID from
+    /// SpectatorMode, or a full WebSocket URL to the source.
+    #[arg(value_parser = infer_stream_url)]
+    stream_url: String
+}
+
+fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
+    if let Ok(_url) = Url::parse(stream_param) {
+        return Ok(stream_param.to_string());
+    }
+    
+    let stream_id = u32::from_str(stream_param)? ;
+    let sm_url = format!("wss://spectatormode.tv/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id);
+    Ok(sm_url)
+}
+
+// TODO: Coerce various specific errors into user-friendly high-level errors
+#[derive(Error, Debug)]
+pub(crate) enum SwbError {
+    #[error("Config error: {0}")]
+    ConfigError(#[from] ConfigError),
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -50,7 +105,8 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+    let args = Cli::parse();
+    println!("parsed args {:?}", args);
 
     if !args.skip_update {
         let update_status = update_if_needed()?;
@@ -74,7 +130,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            connect_and_forward_packets_until_completion(&args.source, args.dest.as_str()).await;
+            let result = 
+                match &args.command {
+                    Commands::Broadcast(b) => {
+                        connect_and_forward_packets_until_completion(&b.source, b.dest.as_str()).await
+                    }
+                    Commands::Spectate(s) => {
+                        mirror_to_dolphin(s.stream_url.as_str()).await
+                    }
+                };
+
+            if let Err(err) = result {
+                tracing::error!("{}", err);
+            }
         });
 
     println!("\nGoodbye!");
@@ -82,7 +150,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) {
+async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
+    // let (interrupt_sender, mut interrupt_receiver) = mpsc::channel::<bool>(100);
+    let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
+    let mut playback_writer = SlpFileWriter::new(true)?;
+    
+    // let mut already_interrupted = false;
+    // ctrlc::set_handler(move || {
+    //     if already_interrupted {
+    //         std::process::exit(2);
+    //     } else {
+    //         already_interrupted = true;
+    //         interrupt_sender.try_send(true).unwrap();
+    //     }
+    // })
+    // .unwrap();
+
+    stream_conn.map(|data| {
+        // This is assuming that no events are split between stream items
+        playback_writer.write_all(&data).unwrap();
+    }).collect::<()>().await;
+
+    spectate::playback_dolphin::close_playback_dolphin();
+
+    Ok(())
+}
+
+// TODO: Bubble existing errors
+async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) -> Result<(), SwbError>  {
     // Initiate connections.
     let mut slippi_conns = vec![];
     let mut slippi_interrupts = vec![];
@@ -112,7 +207,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
                 "dolphin" => false,
                 _ => {
                     tracing::error!("Invalid Slippi platform scheme");
-                    return;
+                    return Ok(());
                 }
             };
 
@@ -140,8 +235,8 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let merged_stream = connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
-    let dolphin_to_sm = connection_manager::forward_slippi_data(merged_stream, sm_client);
+    let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
+    let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
     let extended_sm_client_future = async {
         let result = sm_client_future.await;
         slippi_interrupts_clone.lock().unwrap().iter_mut().for_each(|interrupt| interrupt());
@@ -153,6 +248,8 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
 
     log_forward_result(slippi_to_sm_result);
     log_sm_client_result(sm_client_result);
+
+    Ok(())
 }
 
 async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Box<SlippiDataStream>>, impl FnMut()) {
@@ -162,9 +259,9 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     tracing::info!("Connecting to Slippi {} at {}...", if is_console { "console" } else { "Dolphin" }, source_addr);
     let conn  =
         if is_console {
-            console_connection::data_stream(source_addr, receiver).await
+            broadcast::console_connection::data_stream(source_addr, receiver).await
         } else {
-            dolphin_connection::data_stream(source_addr, receiver).await
+            broadcast::dolphin_connection::data_stream(source_addr, receiver).await
         };
 
     let interruptor_to_return = move || {

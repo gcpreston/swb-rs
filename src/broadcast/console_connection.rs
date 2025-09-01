@@ -98,7 +98,6 @@ pub async fn data_stream(addr:  SocketAddr, mut interrupt_receiver: Receiver<boo
                 Ok(read_result) => {
                     match read_result {
                         Ok(message) => {
-                            tracing::debug!("Read a message {:?}", message);
                             match message.payload {
                                 None => continue,
                                 Some(payload) => yield payload.data.unwrap_or(Vec::new())
