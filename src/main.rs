@@ -96,6 +96,9 @@ pub(crate) enum SwbError {
 
     #[error("Unknown source scheme: {0}")]
     UnknownSourceScheme(String),
+
+    #[error("Unable to connect to SpectatorMode: {0}")]
+    SpectatorModeConnectError(#[from] WSError),
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -185,7 +188,6 @@ async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
     Ok(())
 }
 
-// TODO: Bubble existing errors
 async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) -> Result<(), SwbError>  {
     // Initiate connections.
     let mut slippi_conns = vec![];
@@ -238,7 +240,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     })
     .unwrap();
 
-    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await;
+    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await?;
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.

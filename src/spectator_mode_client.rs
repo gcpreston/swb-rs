@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use ezsockets::client::ClientCloseMode;
-use ezsockets::{Bytes, ClientConfig, SocketConfig};
-use ezsockets::{Error, SendError};
+use ezsockets::{Bytes, ClientConfig, SocketConfig, SendError};
 use futures::{
+    future,
+    pin_mut,
     Sink,
     task::{Context, Poll},
 };
@@ -11,7 +12,7 @@ use std::pin::Pin;
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
-use async_channel;
+use async_channel::{self, RecvError};
 
 #[derive(Error, Debug)]
 pub enum WSError {
@@ -20,6 +21,9 @@ pub enum WSError {
 
     #[error("Close error: {0}")]
     CloseError(#[from] SendError<ezsockets::InMessage>),
+
+    #[error("Connect error: {0}")]
+    ConnectError(&'static str)
 }
 
 pub struct MyClient {
@@ -46,7 +50,7 @@ pub struct BridgeInfo {
 impl ezsockets::ClientExt for MyClient {
     type Call = Call;
 
-    async fn on_text(&mut self, text: ezsockets::Utf8Bytes) -> Result<(), Error> {
+    async fn on_text(&mut self, text: ezsockets::Utf8Bytes) -> Result<(), ezsockets::Error> {
         let bridge_info = serde_json::from_str::<BridgeInfo>(text.as_str())?;
         if !self.initially_connected {
             self.connected_sender.send(bridge_info).await?;
@@ -56,11 +60,11 @@ impl ezsockets::ClientExt for MyClient {
         Ok(())
     }
 
-    async fn on_binary(&mut self, _bytes: ezsockets::Bytes) -> Result<(), Error> {
+    async fn on_binary(&mut self, _bytes: ezsockets::Bytes) -> Result<(), ezsockets::Error> {
         Ok(())
     }
 
-    async fn on_call(&mut self, call: Self::Call) -> Result<(), Error> {
+    async fn on_call(&mut self, call: Self::Call) -> Result<(), ezsockets::Error> {
         match call {
             Call::GameData(payload) => {
                 self.handle.binary(payload).unwrap();
@@ -73,7 +77,7 @@ impl ezsockets::ClientExt for MyClient {
     //     Ok(ClientCloseMode::Close)
     // }
 
-    async fn on_disconnect(&mut self) -> Result<ClientCloseMode, Error> {
+    async fn on_disconnect(&mut self) -> Result<ClientCloseMode, ezsockets::Error> {
         tracing::info!("Reconnecting to SpectatorMode...");
         // Ok(ClientCloseMode::Close)
         Ok(ClientCloseMode::Reconnect)
@@ -107,21 +111,42 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn initiate_connection(address: &str, stream_count: usize) -> (SpectatorModeClient, impl std::future::Future<Output = Result<(), Error>>, BridgeInfo) {
+pub async fn initiate_connection(address: &str, stream_count: usize) -> Result<(SpectatorModeClient, impl std::future::Future<Output = Result<(), ezsockets::Error>>, BridgeInfo), WSError> {
     tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
-    socket_config.timeout = Duration::from_secs(15);
-    let config = ClientConfig::new(url).socket_config(socket_config).max_reconnect_attempts(3).query_parameter("stream_count", stream_count.to_string().as_str());
+    socket_config.timeout = Duration::from_secs(5);
+
+    let config = ClientConfig::new(url)
+        .socket_config(socket_config)
+        .max_initial_connect_attempts(3)
+        .max_reconnect_attempts(3)
+        .query_parameter("stream_count", stream_count.to_string().as_str());
+    
     let (connected_sender, connected_receiver) = async_channel::unbounded();
-    let (sm_handle, future) = ezsockets::connect(|handle| MyClient { handle, connected_sender, initially_connected: false }, config).await;
+    let (sm_handle, sm_future) = ezsockets::connect(|handle| MyClient { handle, connected_sender, initially_connected: false }, config).await;
 
-    let bridge_info = connected_receiver.recv().await.unwrap();
-     tracing::info!(
-        "Connected to SpectatorMode with bridge ID {} and stream IDs {:?}",
-        bridge_info.bridge_id,
-        bridge_info.stream_ids
-    );
+    let recv_future = connected_receiver.recv();
+    pin_mut!(recv_future);
+    pin_mut!(sm_future);
 
-    (SpectatorModeClient { ws_client: sm_handle }, future, bridge_info)
+    match future::select(recv_future, sm_future).await {
+        future::Either::Left((bridge_info_result, _)) => {
+            match bridge_info_result {
+                Ok(bridge_info) => {
+                    tracing::info!(
+                        "Connected to SpectatorMode with bridge ID {} and stream IDs {:?}",
+                        bridge_info.bridge_id,
+                        bridge_info.stream_ids
+                    );
+                    Ok((SpectatorModeClient { ws_client: sm_handle }, sm_future, bridge_info))
+                }
+                Err(RecvError) => Err(WSError::ConnectError("Failed to receive SpectatorMode connection confirmation"))
+            }
+        }
+        future::Either::Right((sm_future_result, _)) => {
+            println!("what is future result {:?}", sm_future_result);
+            Err(WSError::ConnectError("Connection closed before receiving connection confirmation"))
+        }
+    }
 }
