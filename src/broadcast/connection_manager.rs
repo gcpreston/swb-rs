@@ -6,7 +6,7 @@ use ezsockets::Bytes;
 
 use crate::{
     common::SlippiDataStream,
-    spectator_mode_client::{SpectatorModeClient, WSError}
+    spectator_mode_client::{SpectatorModeClient, SpectatorModeClientError}
 };
 
 /// Merge the event streams from multiple Slippi connections into one.
@@ -50,27 +50,16 @@ pub fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>
  * byte size would be required.
  */
 
-pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), WSError>> {
+ /// Send data from a stream of merged `SlippiDataStream`s to a 
+ /// SpectatorMode connection.
+ /// This function has the future completion properties of [`futures::stream::StreamExt::forward`],
+ /// which means that successful exhaustion of the stream will flush and close
+ /// the client sink, but a stream error will not do so. However, since a `SlippiDataStream`
+ /// does not have an error case, *it is assumed the client sink is always
+ /// closed when the returned future is completed. 
+ /// Please refer to the documentation of [`futures::stream::StreamExt::forward`] for more details.
+ pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), SpectatorModeClientError>> {
     stream.filter_map(async |(k, v)| {
-        // let mut data: Vec<Vec<u8>> = Vec::new();
-
-        // let _: Vec<()> =
-        //     v.into_iter().map(|e| {
-        //         // Side-effects
-        //         // ConnectionEvent::Connected will not reach the stream because
-        //         // it is awaited before initiating the SpectatorMode connection.
-        //         match e {
-        //             ConnectionEvent::StartGame => tracing::info!("Received game start event."),
-        //             ConnectionEvent::EndGame => tracing::info!("Received game end event."),
-        //             ConnectionEvent::Disconnect => tracing::info!("Disconnected from Slippi."),
-        //             ConnectionEvent::Message { payload } => {
-        //                 data.push(payload);
-        //             },
-        //             _ => ()
-        //         };
-        //     }).collect();
-
-        // Return
         if v.len() > 0 {
             Some(Ok(create_packet(k, v)))
         } else {

@@ -2,11 +2,9 @@ use std::{io::Write, net::{AddrParseError, Ipv4Addr, SocketAddr}, num::ParseIntE
 
 use clap::{Args, Parser, Subcommand};
 use futures::{channel::mpsc::channel, future, StreamExt};
-use spectator_mode_client::WSError;
 use thiserror::Error;
 use tracing::Level;
 use self_update::cargo_crate_version;
-// use tokio::sync::mpsc;
 use url::{Host, Url};
 
 use crate::{common::SlippiDataStream, config::ConfigError};
@@ -17,6 +15,24 @@ mod spectate;
 mod spectator_mode_client;
 mod common;
 mod config;
+
+#[derive(Error, Debug)]
+pub(crate) enum SwbError {
+    #[error("Config error: {0}")]
+    ConfigError(#[from] ConfigError),
+
+    #[error("Error parsing socket address: {0}")]
+    SocketAddrParseError(#[from] AddrParseError),
+
+    #[error("URL parse error: {0}")]
+    URLParseError(#[from] url::ParseError),
+
+    #[error("Unknown source scheme: {0}")]
+    UnknownSourceScheme(String),
+
+    #[error("SpectatorMode connection error: {0}")]
+    SpectatorModeClientError(#[from] spectator_mode_client::SpectatorModeClientError)
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about)]
@@ -80,28 +96,6 @@ fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
     let stream_id = u32::from_str(stream_param)? ;
     let sm_url = format!("wss://spectatormode.tv/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id);
     Ok(sm_url)
-}
-
-// TODO: Coerce various specific errors into user-friendly high-level errors
-#[derive(Error, Debug)]
-pub(crate) enum SwbError {
-    #[error("Config error: {0}")]
-    ConfigError(#[from] ConfigError),
-
-    #[error("Error parsing socket address: {0}")]
-    SocketAddrParseError(#[from] AddrParseError),
-
-    #[error("URL parse error: {0}")]
-    URLParseError(#[from] url::ParseError),
-
-    #[error("Unknown source scheme: {0}")]
-    UnknownSourceScheme(String),
-
-    #[error("Unable to connect to SpectatorMode: {0}")]
-    SpectatorModeConnectError(#[from] WSError),
-
-    #[error("SpectatorMode connection finished with error: {0}")]
-    SpectatorModeClientError(#[from] ezsockets::Error)
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -249,6 +243,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     // Each individual future will attempt to gracefully disconnect the other.
     let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
+    
     let sm_connection_future = async {
         let sm_client_result = sm_connection_monitor.wait_for_close().await;
         tracing::debug!("SpectatorMode connection has finished, cleaning up...");
@@ -257,7 +252,6 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     };
 
     // Run until both futures complete.
-    // TODO: Seems I need to interrupt sm client if slippi to sm errors unexpectedly? it doesn't return immediately otherwise
     let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
 
     slippi_to_sm_result?;

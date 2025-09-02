@@ -1,4 +1,3 @@
-use async_channel;
 use async_trait::async_trait;
 use ezsockets::client::ClientCloseMode;
 use ezsockets::{Bytes, ClientConfig, SendError, SocketConfig};
@@ -14,20 +13,29 @@ use tokio::sync::oneshot;
 use url::Url;
 
 #[derive(Error, Debug)]
-pub enum WSError {
+pub enum SpectatorModeClientError {
     #[error("Send error: {0}")]
     SendError(#[from] SendError<Call>),
 
     #[error("Close error: {0}")]
     CloseError(#[from] SendError<ezsockets::InMessage>),
 
-    #[error("Connect error: {0}")]
+    #[error("Unable to connect: {0}")]
     ConnectError(&'static str),
+
+    #[error("Connection task panicked")]
+    ConnectionTaskPanickedError,
+
+    #[error("Connection task result already consumed")]
+    ConnectionTaskResultAlreadyConsumedError,
+
+    #[error("Connection finished with error: {0}")]
+    ConnectionTaskResultError(#[from] ezsockets::Error)
 }
 
 pub struct MyClient {
     handle: ezsockets::Client<Self>,
-    connected_sender: async_channel::Sender<BridgeInfo>,
+    connected_sender: Option<oneshot::Sender<BridgeInfo>>,
     initially_connected: bool,
 }
 
@@ -39,13 +47,21 @@ pub struct ConnectionMonitor {
     connection_task: Option<tokio::task::JoinHandle<Result<(), ezsockets::Error>>>,
 }
 
+// TODO: Change messages appropriately
 impl ConnectionMonitor {
-    pub async fn wait_for_close(&mut self) -> Result<(), ezsockets::Error> {
+    pub async fn wait_for_close(&mut self) -> Result<(), SpectatorModeClientError> {
         if let Some(task) = self.connection_task.take() {
-            task.await
-                .unwrap_or(Err(ezsockets::Error::from("Connection task panicked")))
+            match task.await {
+                Ok(connection_task_result) => {
+                    match connection_task_result {
+                        Ok(()) => Ok(()),
+                        Err(ezsockets_err) => Err(SpectatorModeClientError::ConnectionTaskResultError(ezsockets_err))
+                    }
+                }
+                Err(_) => Err(SpectatorModeClientError::ConnectionTaskPanickedError)
+            }
         } else {
-            Err(ezsockets::Error::from("Result already consumed"))
+            Err(SpectatorModeClientError::ConnectionTaskResultAlreadyConsumedError)
         }
     }
 }
@@ -67,9 +83,10 @@ impl ezsockets::ClientExt for MyClient {
     async fn on_text(&mut self, text: ezsockets::Utf8Bytes) -> Result<(), ezsockets::Error> {
         let bridge_info = serde_json::from_str::<BridgeInfo>(text.as_str())?;
         if !self.initially_connected {
-            self.connected_sender.send(bridge_info).await?;
+            if let Some(sender) = self.connected_sender.take() {
+                let _ = sender.send(bridge_info); // Ignore send errors (receiver might be dropped)
+            }
             self.initially_connected = true;
-            self.connected_sender.close();
         }
         Ok(())
     }
@@ -99,7 +116,7 @@ impl ezsockets::ClientExt for MyClient {
 }
 
 impl Sink<Bytes> for SpectatorModeClient {
-    type Error = WSError;
+    type Error = SpectatorModeClientError;
 
     fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -128,11 +145,11 @@ impl Sink<Bytes> for SpectatorModeClient {
 pub async fn initiate_connection(
     address: &str,
     stream_count: usize,
-) -> Result<(SpectatorModeClient, ConnectionMonitor, BridgeInfo), WSError> {
+) -> Result<(SpectatorModeClient, ConnectionMonitor, BridgeInfo), SpectatorModeClientError> {
     tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
-    socket_config.timeout = Duration::from_secs(15);
+    socket_config.timeout = Duration::from_secs(1);
 
     let config = ClientConfig::new(url)
         .socket_config(socket_config)
@@ -140,7 +157,7 @@ pub async fn initiate_connection(
         .max_reconnect_attempts(3)
         .query_parameter("stream_count", stream_count.to_string().as_str());
 
-    let (connected_sender, connected_receiver) = async_channel::unbounded();
+    let (connected_sender, connected_receiver) = oneshot::channel::<BridgeInfo>();
     let (handle_tx, handle_rx) = oneshot::channel();
 
     // Spawn the connection task
@@ -148,7 +165,7 @@ pub async fn initiate_connection(
         let (sm_handle, sm_future) = ezsockets::connect(
             |handle| MyClient {
                 handle,
-                connected_sender,
+                connected_sender: Some(connected_sender),
                 initially_connected: false,
             },
             config,
@@ -159,21 +176,25 @@ pub async fn initiate_connection(
         let _ = handle_tx.send(sm_handle);
 
         // Monitor the connection future and return its result
-        sm_future.await
+        let r = sm_future.await;
+        tracing::debug!("got sm_future result {:?}", r);
+        r
     });
 
     // Wait for initial connection handle
-    let sm_handle = handle_rx
-        .await
-        .map_err(|_| WSError::ConnectError("Connection task failed"))?;
+    // An unwrap failure would indicate the sender was dropped, which is
+    // impossible since there are no error cases before the send in connection_task
+    let sm_handle = handle_rx.await.unwrap();
 
-    // Wait for bridge info with timeout
-    let bridge_info = tokio::time::timeout(Duration::from_secs(10), connected_receiver.recv())
+    // Wait for bridge info on successful connection
+    // TODO: When this fails, it's because connected_sender is dropped, which
+    // means connection_task finished before bridge info was received, meaning
+    // the connection never finished. Therefore, would like to return error
+    // from sm_future, but it isn't accessible here.
+    let bridge_info = connected_receiver
         .await
-        .map_err(|_| WSError::ConnectError("Timeout waiting for bridge info"))?
-        .map_err(|_| WSError::ConnectError("Failed to receive bridge info"))?;
+        .map_err(|_| SpectatorModeClientError::ConnectError("Failed to receive bridge info"))?;
 
-    tracing::debug!("full bridge info: {:?}", bridge_info);
     tracing::info!(
         "Connected to SpectatorMode with bridge ID {} and stream IDs {:?}",
         bridge_info.bridge_id,
