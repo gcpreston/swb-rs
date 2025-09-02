@@ -1,4 +1,4 @@
-use std::{error::Error, io::Write, net::{AddrParseError, Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{io::Write, net::{AddrParseError, Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::{Args, Parser, Subcommand};
 use futures::{channel::mpsc::channel, future, StreamExt};
@@ -99,6 +99,9 @@ pub(crate) enum SwbError {
 
     #[error("Unable to connect to SpectatorMode: {0}")]
     SpectatorModeConnectError(#[from] WSError),
+
+    #[error("SpectatorMode connection finished with error: {0}")]
+    SpectatorModeClientError(#[from] ezsockets::Error)
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -247,16 +250,20 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
     let sm_connection_future = async {
-        sm_connection_monitor.wait_for_close().await;
+        let sm_client_result = sm_connection_monitor.wait_for_close().await;
         tracing::debug!("SpectatorMode connection has finished, cleaning up...");
         slippi_interrupts_clone.lock().unwrap().iter_mut().for_each(|interrupt| interrupt());
+        sm_client_result
     };
 
     // Run until both futures complete.
-    let (slippi_to_sm_result, _sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
+    // TODO: Seems I need to interrupt sm client if slippi to sm errors unexpectedly? it doesn't return immediately otherwise
+    let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
 
-    // TODO: Return error on SM client future error
     slippi_to_sm_result?;
+    tracing::debug!("Slippi stream finished successfully");
+    sm_client_result?;
+    tracing::debug!("SpectatorMode connection finished successfully");
 
     Ok(())
 }
@@ -282,19 +289,4 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     };
 
     (conn, interruptor_to_return)
-}
-
-fn log_forward_result(result: Result<(), WSError>) {
-    match result {
-        Ok(_) => tracing::debug!("Slippi stream finished successfully"),
-        Err(e) => tracing::error!("Slippi stream finished with error: {e:?}")
-    }
-}
-
-fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
-    match result {
-        Ok(_) => tracing::debug!("SpectatorMode connection finished successfully"),
-        Err(e) => tracing::error!("SpectatorMode connection finished with error: {e:?}")
-    };
-    tracing::info!("Disconnected from SpectatorMode.");
 }

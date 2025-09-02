@@ -1,4 +1,4 @@
-use async_channel::{self, RecvError};
+use async_channel;
 use async_trait::async_trait;
 use ezsockets::client::ClientCloseMode;
 use ezsockets::{Bytes, ClientConfig, SendError, SocketConfig};
@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::pin::Pin;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::oneshot;
 use url::Url;
 
 #[derive(Error, Debug)]
@@ -36,19 +36,17 @@ pub struct SpectatorModeClient {
 }
 
 pub struct ConnectionMonitor {
-    // Signals when the connection is lost/closed
-    connection_closed_rx: watch::Receiver<bool>,
-    // The actual connection future (runs in background)
-    _connection_task: tokio::task::JoinHandle<Result<(), ezsockets::Error>>,
+    connection_task: Option<tokio::task::JoinHandle<Result<(), ezsockets::Error>>>,
 }
 
 impl ConnectionMonitor {
-    pub async fn wait_for_close(&mut self) {
-        let _ = self.connection_closed_rx.changed().await;
-    }
-
-    pub fn is_closed(&self) -> bool {
-        *self.connection_closed_rx.borrow()
+    pub async fn wait_for_close(&mut self) -> Result<(), ezsockets::Error> {
+        if let Some(task) = self.connection_task.take() {
+            task.await
+                .unwrap_or(Err(ezsockets::Error::from("Connection task panicked")))
+        } else {
+            Err(ezsockets::Error::from("Result already consumed"))
+        }
     }
 }
 
@@ -144,7 +142,6 @@ pub async fn initiate_connection(
 
     let (connected_sender, connected_receiver) = async_channel::unbounded();
     let (handle_tx, handle_rx) = oneshot::channel();
-    let (connection_closed_tx, connection_closed_rx) = watch::channel(false);
 
     // Spawn the connection task
     let connection_task = tokio::spawn(async move {
@@ -161,10 +158,8 @@ pub async fn initiate_connection(
         // Send the handle back immediately
         let _ = handle_tx.send(sm_handle);
 
-        // Monitor the connection future
-        let result = sm_future.await;
-        let _ = connection_closed_tx.send(true);
-        result
+        // Monitor the connection future and return its result
+        sm_future.await
     });
 
     // Wait for initial connection handle
@@ -178,6 +173,7 @@ pub async fn initiate_connection(
         .map_err(|_| WSError::ConnectError("Timeout waiting for bridge info"))?
         .map_err(|_| WSError::ConnectError("Failed to receive bridge info"))?;
 
+    tracing::debug!("full bridge info: {:?}", bridge_info);
     tracing::info!(
         "Connected to SpectatorMode with bridge ID {} and stream IDs {:?}",
         bridge_info.bridge_id,
@@ -185,8 +181,7 @@ pub async fn initiate_connection(
     );
 
     let monitor = ConnectionMonitor {
-        connection_closed_rx,
-        _connection_task: connection_task,
+        connection_task: Some(connection_task),
     };
 
     Ok((
