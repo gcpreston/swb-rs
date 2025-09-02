@@ -47,16 +47,12 @@ pub struct ConnectionMonitor {
     connection_task: Option<tokio::task::JoinHandle<Result<(), ezsockets::Error>>>,
 }
 
-// TODO: Change messages appropriately
 impl ConnectionMonitor {
     pub async fn wait_for_close(&mut self) -> Result<(), SpectatorModeClientError> {
         if let Some(task) = self.connection_task.take() {
             match task.await {
                 Ok(connection_task_result) => {
-                    match connection_task_result {
-                        Ok(()) => Ok(()),
-                        Err(ezsockets_err) => Err(SpectatorModeClientError::ConnectionTaskResultError(ezsockets_err))
-                    }
+                    connection_task_result.map_err(|ezsockets_err| SpectatorModeClientError::ConnectionTaskResultError(ezsockets_err))
                 }
                 Err(_) => Err(SpectatorModeClientError::ConnectionTaskPanickedError)
             }
@@ -149,7 +145,7 @@ pub async fn initiate_connection(
     tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
-    socket_config.timeout = Duration::from_secs(1);
+    socket_config.timeout = Duration::from_secs(15);
 
     let config = ClientConfig::new(url)
         .socket_config(socket_config)
@@ -160,7 +156,10 @@ pub async fn initiate_connection(
     let (connected_sender, connected_receiver) = oneshot::channel::<BridgeInfo>();
     let (handle_tx, handle_rx) = oneshot::channel();
 
-    // Spawn the connection task
+    // Initiate the connection and await its completion within a background task.
+    // This allows us to wait for connected_receiver to receive the bridge info
+    // from the server, and drop to an error case if the connection completes,
+    // which would mean the receiver would never receive a value.
     let connection_task = tokio::spawn(async move {
         let (sm_handle, sm_future) = ezsockets::connect(
             |handle| MyClient {
@@ -172,13 +171,8 @@ pub async fn initiate_connection(
         )
         .await;
 
-        // Send the handle back immediately
         let _ = handle_tx.send(sm_handle);
-
-        // Monitor the connection future and return its result
-        let r = sm_future.await;
-        tracing::debug!("got sm_future result {:?}", r);
-        r
+        sm_future.await
     });
 
     // Wait for initial connection handle
