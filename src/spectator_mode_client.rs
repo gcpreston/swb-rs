@@ -1,9 +1,8 @@
+use async_channel::{self, RecvError};
 use async_trait::async_trait;
 use ezsockets::client::ClientCloseMode;
-use ezsockets::{Bytes, ClientConfig, SocketConfig, SendError};
+use ezsockets::{Bytes, ClientConfig, SendError, SocketConfig};
 use futures::{
-    future,
-    pin_mut,
     Sink,
     task::{Context, Poll},
 };
@@ -11,8 +10,8 @@ use serde::Deserialize;
 use std::pin::Pin;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::{oneshot, watch};
 use url::Url;
-use async_channel::{self, RecvError};
 
 #[derive(Error, Debug)]
 pub enum WSError {
@@ -23,17 +22,34 @@ pub enum WSError {
     CloseError(#[from] SendError<ezsockets::InMessage>),
 
     #[error("Connect error: {0}")]
-    ConnectError(&'static str)
+    ConnectError(&'static str),
 }
 
 pub struct MyClient {
     handle: ezsockets::Client<Self>,
     connected_sender: async_channel::Sender<BridgeInfo>,
-    initially_connected: bool
+    initially_connected: bool,
 }
 
 pub struct SpectatorModeClient {
     ws_client: ezsockets::Client<MyClient>,
+}
+
+pub struct ConnectionMonitor {
+    // Signals when the connection is lost/closed
+    connection_closed_rx: watch::Receiver<bool>,
+    // The actual connection future (runs in background)
+    _connection_task: tokio::task::JoinHandle<Result<(), ezsockets::Error>>,
+}
+
+impl ConnectionMonitor {
+    pub async fn wait_for_close(&mut self) {
+        let _ = self.connection_closed_rx.changed().await;
+    }
+
+    pub fn is_closed(&self) -> bool {
+        *self.connection_closed_rx.borrow()
+    }
 }
 
 pub enum Call {
@@ -43,7 +59,7 @@ pub enum Call {
 #[derive(Deserialize, Debug)]
 pub struct BridgeInfo {
     pub bridge_id: String,
-    pub stream_ids: Vec<u32>
+    pub stream_ids: Vec<u32>,
 }
 
 #[async_trait]
@@ -111,42 +127,73 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn initiate_connection(address: &str, stream_count: usize) -> Result<(SpectatorModeClient, impl std::future::Future<Output = Result<(), ezsockets::Error>>, BridgeInfo), WSError> {
+pub async fn initiate_connection(
+    address: &str,
+    stream_count: usize,
+) -> Result<(SpectatorModeClient, ConnectionMonitor, BridgeInfo), WSError> {
     tracing::info!("Connecting to SpectatorMode...");
     let url = Url::parse(address).unwrap();
     let mut socket_config = SocketConfig::default();
-    socket_config.timeout = Duration::from_secs(5);
+    socket_config.timeout = Duration::from_secs(15);
 
     let config = ClientConfig::new(url)
         .socket_config(socket_config)
         .max_initial_connect_attempts(3)
         .max_reconnect_attempts(3)
         .query_parameter("stream_count", stream_count.to_string().as_str());
-    
+
     let (connected_sender, connected_receiver) = async_channel::unbounded();
-    let (sm_handle, sm_future) = ezsockets::connect(|handle| MyClient { handle, connected_sender, initially_connected: false }, config).await;
+    let (handle_tx, handle_rx) = oneshot::channel();
+    let (connection_closed_tx, connection_closed_rx) = watch::channel(false);
 
-    let recv_future = connected_receiver.recv();
-    pin_mut!(recv_future);
-    pin_mut!(sm_future);
+    // Spawn the connection task
+    let connection_task = tokio::spawn(async move {
+        let (sm_handle, sm_future) = ezsockets::connect(
+            |handle| MyClient {
+                handle,
+                connected_sender,
+                initially_connected: false,
+            },
+            config,
+        )
+        .await;
 
-    match future::select(recv_future, sm_future).await {
-        future::Either::Left((bridge_info_result, _)) => {
-            match bridge_info_result {
-                Ok(bridge_info) => {
-                    tracing::info!(
-                        "Connected to SpectatorMode with bridge ID {} and stream IDs {:?}",
-                        bridge_info.bridge_id,
-                        bridge_info.stream_ids
-                    );
-                    Ok((SpectatorModeClient { ws_client: sm_handle }, sm_future, bridge_info))
-                }
-                Err(RecvError) => Err(WSError::ConnectError("Failed to receive SpectatorMode connection confirmation"))
-            }
-        }
-        future::Either::Right((sm_future_result, _)) => {
-            println!("what is future result {:?}", sm_future_result);
-            Err(WSError::ConnectError("Connection closed before receiving connection confirmation"))
-        }
-    }
+        // Send the handle back immediately
+        let _ = handle_tx.send(sm_handle);
+
+        // Monitor the connection future
+        let result = sm_future.await;
+        let _ = connection_closed_tx.send(true);
+        result
+    });
+
+    // Wait for initial connection handle
+    let sm_handle = handle_rx
+        .await
+        .map_err(|_| WSError::ConnectError("Connection task failed"))?;
+
+    // Wait for bridge info with timeout
+    let bridge_info = tokio::time::timeout(Duration::from_secs(10), connected_receiver.recv())
+        .await
+        .map_err(|_| WSError::ConnectError("Timeout waiting for bridge info"))?
+        .map_err(|_| WSError::ConnectError("Failed to receive bridge info"))?;
+
+    tracing::info!(
+        "Connected to SpectatorMode with bridge ID {} and stream IDs {:?}",
+        bridge_info.bridge_id,
+        bridge_info.stream_ids
+    );
+
+    let monitor = ConnectionMonitor {
+        connection_closed_rx,
+        _connection_task: connection_task,
+    };
+
+    Ok((
+        SpectatorModeClient {
+            ws_client: sm_handle,
+        },
+        monitor,
+        bridge_info,
+    ))
 }

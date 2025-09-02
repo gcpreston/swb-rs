@@ -240,23 +240,23 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     })
     .unwrap();
 
-    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await?;
+    let (sm_client, mut sm_connection_monitor, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await?;
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
     let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
-    let extended_sm_client_future = async {
-        let result = sm_client_future.await;
+    let sm_connection_future = async {
+        sm_connection_monitor.wait_for_close().await;
+        tracing::debug!("SpectatorMode connection has finished, cleaning up...");
         slippi_interrupts_clone.lock().unwrap().iter_mut().for_each(|interrupt| interrupt());
-        result
     };
 
     // Run until both futures complete.
-    let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, extended_sm_client_future).await;
+    let (slippi_to_sm_result, _sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
 
-    log_forward_result(slippi_to_sm_result);
-    log_sm_client_result(sm_client_result);
+    // TODO: Return error on SM client future error
+    slippi_to_sm_result?;
 
     Ok(())
 }
@@ -287,14 +287,14 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
 fn log_forward_result(result: Result<(), WSError>) {
     match result {
         Ok(_) => tracing::debug!("Slippi stream finished successfully"),
-        Err(e) => tracing::debug!("Slippi stream finished with error: {e:?}")
+        Err(e) => tracing::error!("Slippi stream finished with error: {e:?}")
     }
 }
 
 fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
     match result {
         Ok(_) => tracing::debug!("SpectatorMode connection finished successfully"),
-        Err(e) => tracing::debug!("SpectatorMode connection finished with error: {e:?}")
+        Err(e) => tracing::error!("SpectatorMode connection finished with error: {e:?}")
     };
     tracing::info!("Disconnected from SpectatorMode.");
 }
