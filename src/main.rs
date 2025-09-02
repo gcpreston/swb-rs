@@ -1,12 +1,10 @@
-use std::{error::Error, io::Write, net::{Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{io::Write, net::{AddrParseError, Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::{Args, Parser, Subcommand};
 use futures::{channel::mpsc::channel, future, StreamExt};
-use spectator_mode_client::WSError;
 use thiserror::Error;
 use tracing::Level;
 use self_update::cargo_crate_version;
-// use tokio::sync::mpsc;
 use url::{Host, Url};
 
 use crate::{common::SlippiDataStream, config::ConfigError};
@@ -17,6 +15,24 @@ mod spectate;
 mod spectator_mode_client;
 mod common;
 mod config;
+
+#[derive(Error, Debug)]
+pub(crate) enum SwbError {
+    #[error("Config error: {0}")]
+    ConfigError(#[from] ConfigError),
+
+    #[error("Error parsing socket address: {0}")]
+    SocketAddrParseError(#[from] AddrParseError),
+
+    #[error("URL parse error: {0}")]
+    URLParseError(#[from] url::ParseError),
+
+    #[error("Unknown source scheme: {0}")]
+    UnknownSourceScheme(String),
+
+    #[error("SpectatorMode connection error: {0}")]
+    SpectatorModeClientError(#[from] spectator_mode_client::SpectatorModeClientError)
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about)]
@@ -80,13 +96,6 @@ fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
     let stream_id = u32::from_str(stream_param)? ;
     let sm_url = format!("wss://spectatormode.tv/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id);
     Ok(sm_url)
-}
-
-// TODO: Coerce various specific errors into user-friendly high-level errors
-#[derive(Error, Debug)]
-pub(crate) enum SwbError {
-    #[error("Config error: {0}")]
-    ConfigError(#[from] ConfigError),
 }
 
 fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>> {
@@ -176,7 +185,6 @@ async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
     Ok(())
 }
 
-// TODO: Bubble existing errors
 async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, dest: &str) -> Result<(), SwbError>  {
     // Initiate connections.
     let mut slippi_conns = vec![];
@@ -185,13 +193,13 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     let mut already_interrupted = false;
 
     for source_string in sources_owned {
-        let string_to_parse =
+        let string_to_parse = 
             if !source_string.contains("://") {
                 format!("{}{}", "console://", source_string)
             } else {
                 source_string
             };
-        let parsed_url = Url::parse(string_to_parse.as_str()).expect("Invalid URL scheme");
+        let parsed_url = Url::parse(string_to_parse.as_str())?;
 
         let scheme = parsed_url.scheme();
         let host = parsed_url.host().unwrap_or(Host::Ipv4(Ipv4Addr::from_str("127.0.0.1").unwrap()));
@@ -200,16 +208,13 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
         tracing::debug!("using url scheme: {:?}, host: {:?}, port: {:?}", scheme, host, port);
 
         let socket_addr_string = format!("{}:{}", host, port);
-        let source_addr = SocketAddr::from_str(socket_addr_string.as_str()).expect("Invalid socket address");
+        let source_addr = SocketAddr::from_str(socket_addr_string.as_str())?;
         let is_console =
             match scheme {
-                "console" => true,
-                "dolphin" => false,
-                _ => {
-                    tracing::error!("Invalid Slippi platform scheme");
-                    return Ok(());
-                }
-            };
+                "console" => Ok(true),
+                "dolphin" => Ok(false),
+                other_scheme => Err(SwbError::UnknownSourceScheme(other_scheme.to_string()))
+            }?;
 
         let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, is_console).await;
         slippi_conns.push(slippi_conn);
@@ -223,6 +228,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
         if already_interrupted {
             std::process::exit(2);
         } else {
+            tracing::info!("Shutting down gracefully... press Ctrl + C again to force exit.");
             already_interrupted = true;
             for interrupt in slippi_interrupts.lock().unwrap().iter_mut() {
                 interrupt();
@@ -231,23 +237,27 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     })
     .unwrap();
 
-    let (sm_client, sm_client_future, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await;
+    let (sm_client, mut sm_connection_monitor, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await?;
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
     let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
-    let extended_sm_client_future = async {
-        let result = sm_client_future.await;
+    
+    let sm_connection_future = async {
+        let sm_client_result = sm_connection_monitor.wait_for_close().await;
+        tracing::debug!("SpectatorMode connection has finished, cleaning up...");
         slippi_interrupts_clone.lock().unwrap().iter_mut().for_each(|interrupt| interrupt());
-        result
+        sm_client_result
     };
 
     // Run until both futures complete.
-    let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, extended_sm_client_future).await;
+    let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
 
-    log_forward_result(slippi_to_sm_result);
-    log_sm_client_result(sm_client_result);
+    slippi_to_sm_result?;
+    tracing::debug!("Slippi stream finished successfully");
+    sm_client_result?;
+    tracing::debug!("SpectatorMode connection finished successfully");
 
     Ok(())
 }
@@ -263,6 +273,7 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
         } else {
             broadcast::dolphin_connection::data_stream(source_addr, receiver).await
         };
+    tracing::info!("Connected to Slippi.");
 
     let interruptor_to_return = move || {
         match other_sender.try_send(true) {
@@ -272,19 +283,4 @@ async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Bo
     };
 
     (conn, interruptor_to_return)
-}
-
-fn log_forward_result(result: Result<(), WSError>) {
-    match result {
-        Ok(_) => tracing::debug!("Slippi stream finished successfully"),
-        Err(e) => tracing::debug!("Slippi stream finished with error: {e:?}")
-    }
-}
-
-fn log_sm_client_result(result: Result<(), Box<dyn Error + Send + Sync>>) {
-    match result {
-        Ok(_) => tracing::debug!("SpectatorMode connection finished successfully"),
-        Err(e) => tracing::debug!("SpectatorMode connection finished with error: {e:?}")
-    };
-    tracing::info!("Disconnected from SpectatorMode.");
 }

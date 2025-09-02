@@ -76,7 +76,6 @@ async fn read_next_message(tcp_stream: &mut TcpStream) -> Result<CommunicationMe
 
 pub async fn data_stream(addr:  SocketAddr, mut interrupt_receiver: Receiver<bool>) -> Pin<Box<SlippiDataStream>> {
     let mut tcp_stream = establish_console_connection(addr).await.unwrap();
-    tracing::info!("Connected to Slippi.");
 
     Box::pin(stream! {
         loop {
