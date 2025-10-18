@@ -56,7 +56,7 @@ enum Commands {
     Spectate(Spectate)
 }
 
-/// Stream one or multiple Slippi instances to SpectatorMode. 
+/// Stream one or multiple Slippi instances to SpectatorMode.
 #[derive(Args, Debug)]
 struct Broadcast {
     /// The SpectatorMode WebSocket endpoint to connect and forward data to.
@@ -64,7 +64,7 @@ struct Broadcast {
     dest: String,
 
     /// Slippi sources to forward data from, in the format schema://host:port.
-    /// schema may be "console" or "dolphin", and defaults to "console" if 
+    /// schema may be "console" or "dolphin", and defaults to "console" if
     /// unspecified. Multiple sources may be given.
     #[arg(short, long, default_value = "dolphin://127.0.0.1:51441")]
     source: Vec<String>,
@@ -72,11 +72,11 @@ struct Broadcast {
 
 /// Mirror a stream in Playback Dolphin. This can consume a stream either from
 /// SpectatorMode, or from an arbitrary source.
-/// 
-/// If an arbitrary source is provided, swb expects it to be a WebSocket server 
-/// which (1) sends the entire .slp replay up to the current point upon 
+///
+/// If an arbitrary source is provided, swb expects it to be a WebSocket server
+/// which (1) sends the entire .slp replay up to the current point upon
 /// connection, and (2) sends Slippi events as they come in after connection.
-/// 
+///
 /// Messages must be sent from the server in binary mode as unwrapped Slippi
 /// events. One message may contain multiple Slippi events, but a Slippi event
 /// must not be split between multiple messages.
@@ -92,7 +92,7 @@ fn infer_stream_url(stream_param: &str) -> Result<String, ParseIntError> {
     if let Ok(_url) = Url::parse(stream_param) {
         return Ok(stream_param.to_string());
     }
-    
+
     let stream_id = u32::from_str(stream_param)? ;
     let sm_url = format!("wss://spectatormode.tv/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id);
     Ok(sm_url)
@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap()
         .block_on(async {
-            let result = 
+            let result =
                 match &args.command {
                     Commands::Broadcast(b) => {
                         connect_and_forward_packets_until_completion(&b.source, b.dest.as_str()).await
@@ -159,11 +159,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// TODO: Exit automatically when stream being watched is finished
 async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
     // let (interrupt_sender, mut interrupt_receiver) = mpsc::channel::<bool>(100);
     let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
     let mut playback_writer = SlpFileWriter::new(true)?;
-    
+
     // let mut already_interrupted = false;
     // ctrlc::set_handler(move || {
     //     if already_interrupted {
@@ -193,7 +194,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     let mut already_interrupted = false;
 
     for source_string in sources_owned {
-        let string_to_parse = 
+        let string_to_parse =
             if !source_string.contains("://") {
                 format!("{}{}", "console://", source_string)
             } else {
@@ -243,7 +244,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     // Each individual future will attempt to gracefully disconnect the other.
     let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
     let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
-    
+
     let sm_connection_future = async {
         let sm_client_result = sm_connection_monitor.wait_for_close().await;
         tracing::debug!("SpectatorMode connection has finished, cleaning up...");

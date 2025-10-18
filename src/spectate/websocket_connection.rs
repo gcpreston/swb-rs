@@ -11,7 +11,7 @@ use crate::common::SlippiDataStream;
 // Does it matter? These functions shouldn't really be interchangable anyways,
 // maybe just the return type matters. In that case, change name too.
 pub async fn data_stream(address: &str) -> Pin<Box<SlippiDataStream>> {
-    tracing::info!("Connecting to SpectatorMode...");
+    tracing::info!("Connecting to SpectatorMode at {}...", address);
     let request = address.into_client_request().unwrap();
     let (stream, _response) = connect_async(request).await.unwrap();
     tracing::info!("Connected to SpectatorMode.");
