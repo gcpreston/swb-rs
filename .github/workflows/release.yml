@@ -69,16 +69,14 @@ jobs:
             # Broadcast and spectate scripts
             cp "scripts/bash/broadcast.sh" "$dirname"
             cp "scripts/bash/spectate.sh" "$dirname"
-
-            echo "What's in dirname:"
-            ls -la "$dirname"
-            echo "What's in .:"
-            ls -la .
-            echo "What's in scripts/bash:"
-            ls -la scripts/bash
-
             chmod +x "$dirname/broadcast.sh"
             chmod +x "$dirname/spectate.sh"
+          fi
+
+          # Rename to .command on Mac for double-click functionality
+          if [[ "${{ matrix.os }}" = "macos-latest" ]]; then
+            mv "$dirname/broadcast.sh" "$dirname/broadcast.command"
+            mv "$dirname/spectate.sh" "$dirname/spectate.command"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
