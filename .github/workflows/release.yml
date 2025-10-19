@@ -66,13 +66,9 @@ jobs:
             # Executable
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
 
-            # Broadcast script
-            echo "#!/bin/bash\n./swb broadcast\n" >> "$dirname/broadcast.sh"
-            chmod +x "$dirname/broadcast.sh"
-
-            # Spectate script
-            echo '#!/bin/bash\nread -p "Enter the stream ID to spectate: " streamid\n./swb spectate streamid\n' >> "$dirname/spectate.sh"
-            chmod +x "$dirname/spectate.sh"
+            # Helper scripts
+            cp -a "scripts/bash" "$dirname"
+            chmod +x "$dirname/*"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
