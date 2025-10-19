@@ -1,4 +1,3 @@
-&commat;echo off
 SET script_dir="%~dp0"
-set /p "streamid=Enter the stream ID to spectate: "
+SET /p "streamid=Enter the stream ID to spectate: "
 %script_dir%/swb.exe spectate %streamid%
