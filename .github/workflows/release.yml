@@ -65,16 +65,17 @@ jobs:
           else
             # Executable
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
+
+            # Broadcast and spectate scripts
+            cp -a "scripts/bash" "$dirname"
+
             echo "What's in dirname:"
             ls -la "$dirname"
             echo "What's in .:"
             ls -la .
-            echo "What's in scripts:"
-            ls -la scripts
+            echo "What's in scripts/bash:"
+            ls -la scripts/bash
 
-
-            # Broadcast and spectate scripts
-            cp -a "scripts/bash" "$dirname"
             chmod +x "$dirname/broadcast.sh"
             chmod +x "$dirname/spectate.sh"
           fi
