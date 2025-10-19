@@ -67,7 +67,8 @@ jobs:
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
 
             # Broadcast and spectate scripts
-            cp -a "scripts/bash" "$dirname"
+            cp "scripts/bash/broadcast.sh" "$dirname"
+            cp "scripts/bash/spectate.sh" "$dirname"
 
             echo "What's in dirname:"
             ls -la "$dirname"
