@@ -27,7 +27,7 @@ impl SlpFileWriter {
         }
 
         let config = config::get_application_config();
-        
+
         Ok(SlpFileWriter {
             mirror_in_dolphin: mirror_in_dolphin,
             spectate_directory_path: config.get_spectate_replay_directory_path()?,
@@ -37,7 +37,7 @@ impl SlpFileWriter {
     }
 
     fn read_next_event<R: Read>(&mut self, mut data: R) -> std::io::Result<usize> {
-        // so payload sizes might be send 
+        // so payload sizes might be send
         match &self.payload_sizes {
             None => {
                 let (bytes_read, payload_sizes) = parse_payloads(data)?;
@@ -71,7 +71,7 @@ impl Write for SlpFileWriter {
 
         while let Ok(bytes_read) = self.read_next_event(&mut r) {
             let event_data = &data[bytes_written..(bytes_written + bytes_read)];
-            
+
             // Set current file and mirror as needed according to event type
             match event_data[0] {
                 0x35 => {

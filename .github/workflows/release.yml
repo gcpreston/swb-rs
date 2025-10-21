@@ -5,6 +5,7 @@ on:
     tags:
       - v[0-9]+\.[0-9]+\.[0-9]+
       - v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+
+      - v[0-9]+\.[0-9]+\.[0-9]+-pre\.[0-9]+
 
 permissions:
   contents: write
@@ -47,6 +48,15 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Build the binary
         shell: bash
         run: |
@@ -60,9 +70,30 @@ jobs:
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.rust_target }}"
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
+            # Executable
             mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
+
+            # Broadcast and spectate scripts
+            cp "scripts/cmd/broadcast.cmd" "$dirname"
+            cp "scripts/cmd/spectate.cmd" "$dirname"
+            # Not sure how this works once it goes to Windows but can't hurt I suppose
+            chmod +x "$dirname/broadcast.cmd"
+            chmod +x "$dirname/spectate.cmd"
           else
+            # Executable
             mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
+
+            # Broadcast and spectate scripts
+            cp "scripts/bash/broadcast.sh" "$dirname"
+            cp "scripts/bash/spectate.sh" "$dirname"
+            chmod +x "$dirname/broadcast.sh"
+            chmod +x "$dirname/spectate.sh"
+          fi
+
+          # Rename to .command on Mac for double-click functionality
+          if [[ "${{ matrix.os }}" = "macos-latest" ]]; then
+            mv "$dirname/broadcast.sh" "$dirname/broadcast.command"
+            mv "$dirname/spectate.sh" "$dirname/spectate.command"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then

@@ -55,8 +55,8 @@ impl std::fmt::Display for ConfigError {
             }
             ConfigError::PlatformError(platform) => {
                 write!(
-                    f, 
-                    "Unable to locate Playback Dolphin for unknown platform: {}, please submit a bug report to the repository indicating your operating system:\nhttps://github.com/gcpreston/swb-rs/issues/new", 
+                    f,
+                    "Unable to locate Playback Dolphin for unknown platform: {}, please submit a bug report to the repository indicating your operating system:\nhttps://github.com/gcpreston/swb-rs/issues/new",
                     platform
                 )
             }
@@ -102,7 +102,7 @@ pub(crate) fn get_application_config() -> Config {
 impl Config {
     fn config_path(&self) -> &Path {
         let config_path = self.project_dirs.config_dir();
-        
+
         if !config_path.exists() {
             fs::create_dir_all(config_path).unwrap();
         }
@@ -113,7 +113,7 @@ impl Config {
         // On Windows, the actual config path as set by the directories library
         // has an extra \config directory appended, which Mac and Linux don't
         // have. This logic allows us to navigate correctly.
-        let join_path = 
+        let join_path =
             if std::env::consts::OS == "windows" {
                "../../Slippi Launcher"
             } else {
@@ -217,7 +217,7 @@ impl Config {
         let settings_path = self.config_path().join(SETTINGS_FILE_NAME);
 
         // Try to read existing spectate settings
-        let spectate_directory = if settings_path.exists() {
+        let maybe_spectate_directory = if settings_path.exists() {
             let content = fs::read_to_string(&settings_path)
                 .map_err(|e| ConfigError::FileRead(settings_path.clone(), e))?;
 
@@ -232,10 +232,10 @@ impl Config {
             None
         };
 
-        // If spectate directory is set, use it; otherwise use default and save it
-        match spectate_directory {
-            Some(dir) => Ok(PathBuf::from(dir)),
-            None => {
+        let spectate_directory =
+            if let Some(dir) = maybe_spectate_directory {
+                PathBuf::from(dir)
+            } else {
                 // Use default: rootSlpPath + "Spectate"
                 let root_slp_path = self.root_slp_path()?;
                 let default_path = PathBuf::from(root_slp_path).join("Spectate");
@@ -243,8 +243,12 @@ impl Config {
                 // Save the default path to settings
                 self.set_spectate_replay_directory_path(default_path.clone().into_os_string().into_string().unwrap())?;
 
-                Ok(default_path)
-            }
-        }
+                default_path
+            };
+
+        // Create spectate directory if it doesn't exist
+        fs::create_dir_all(spectate_directory.clone()).unwrap(); // TODO: Handle error via ConfigError
+
+        Ok(spectate_directory)
     }
 }

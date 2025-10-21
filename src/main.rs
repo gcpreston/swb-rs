@@ -115,7 +115,6 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
-    println!("parsed args {:?}", args);
 
     if !args.skip_update {
         let update_status = update_if_needed()?;

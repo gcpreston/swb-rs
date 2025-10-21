@@ -17,23 +17,37 @@ Make sure to download the correct file for your operating system:
 
 ## Usage
 
+This is a terminal program for the moment; the releases contain helper scripts for convenience.
+
+### Broadcast
+
 - Open Slippi.
-- Unzip the downloaded archive and run the `swb.exe` or `swb` file inside.
+- Unzip the downloaded archive and double-click the `broadcast.cmd` or `broadcast.sh` file inside.
 - To exit, use Ctrl + C. Make sure the terminal window is focused.
-- For additional options, run with the `--help` flag (via command line): `swb --help`.
 
-## Local development
+### Spectate
 
-To run the program from source, simply [install Rust](https://www.rust-lang.org/tools/install), then clone and
+- Unzip the downloaded archive and double-click the `spectate.cmd` or `spectate.sh` file inside.
+- Enter the stream ID, found on the SpectatorMode site. If pasting via Ctrl + V doesn't work, right-click and select "Paste".
+- To exit, use Ctrl + C. Make sure the terminal window is focused.
+
+### Terminal usage
+
+The basic commands for `swb` itself are:
 
 ```bash
-$ cd swb-rs
-$ cargo run
+# Broadcast to spectatormode.tv
+swb broadcast
+
+# Spectate in Dolphin from spectatormode.tv
+swb spectate <stream_id>
 ```
+
+A full list of options can be found using `swb --help` or `swb <command> --help`.
 
 ## Troubleshooting
 
-If you are on Mac and get a message like `"swb" was not opened`:
+If you are on Mac and get a message like `"broadcast.sh" was not opened` or `"swb" was not opened`:
 - Open Settings
 - Go to Privacy & Security
 - Scroll down to the Security section
@@ -41,9 +55,11 @@ If you are on Mac and get a message like `"swb" was not opened`:
 
 If you are on any platform and the program is blocked by antivirus, either create an exception in the relevant software, or [run the program from source](https://github.com/gcpreston/swb-rs?tab=readme-ov-file#local-development).
 
-## Supported options
+## Local development
 
-* `--dest`: Specify the WebSocket URL to connect to. Used for connecting to an alternative instance of SpectatorMode, for example for local development: `ws://localhost:4000/bridge_socket/websocket`
-* `--source`: Specify the address and port of the Slippi stream. Defaults to `127.0.0.1:51441`.
-* `--verbose`: Print more logs. Useful for debugging.
-* `--skip-update`: Don't attempt to self-update. Useful for local development when not connected to the internet.
+To run the program from source, simply [install Rust](https://www.rust-lang.org/tools/install), then clone and
+
+```bash
+$ cd swb-rs
+$ cargo run -- <options>
+```
