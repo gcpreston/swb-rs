@@ -4,4 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+swb = { path = "../swb" }
 iced = "0.13.1"
+tracing = "0.1.41"
+url = "2.5.4"
+thiserror = "2.0.17"
+futures = "0.3.31"
+tokio = { version = "1.45.0", features = ["full", "time"] }
+rusty_enet = "0.4.0"
+
+[[bin]]
+name = "gui"
+path = "src/main.rs"
+
+[[bin]]
+name = "test"
+path = "src/test.rs"

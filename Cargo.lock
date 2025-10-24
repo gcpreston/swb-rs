@@ -1751,7 +1751,14 @@ dependencies = [
 name = "gui"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "iced",
+ "rusty_enet",
+ "swb",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

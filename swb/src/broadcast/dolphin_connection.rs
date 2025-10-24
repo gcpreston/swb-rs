@@ -1,11 +1,10 @@
 use std::{
-    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, pin::Pin, str, time::Duration
+    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, pin::Pin, str, thread, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use futures::{
     channel::mpsc::Receiver,
-    future,
     stream,
     task::{Context, Poll},
 };
@@ -14,39 +13,44 @@ use serde::de::Error;
 use serde_json::{Result as SerdeResult, Value};
 use tokio::time::interval;
 
+
 use crate::common::SlippiDataStream;
 
 fn full_service(
-    host_cell: &RefCell<enet::Host<UdpSocket>>,
+    host: enet::Host<UdpSocket>,
     interrupt_cell: &RefCell<Receiver<bool>>,
     peer_id: enet::PeerID
-) -> Result<Vec<ConnectionEvent>, &'static str> {
+) -> Result<(enet::Host<UdpSocket>, Vec<ConnectionEvent>), &'static str> {
     let mut events: Vec<ConnectionEvent> = Vec::new();
 
+    let mut host_cycle = host;
+
     loop {
-        match service(host_cell, interrupt_cell, peer_id)? {
+        let (new_host, result) = service(host_cycle, interrupt_cell, peer_id);
+        host_cycle = new_host;
+        match result? {
             None => break,
             Some(event) => events.push(event),
         }
     }
 
-    Ok(events)
+    Ok((host_cycle, events))
 }
 
+// TODO: Probably makes more sense to return Result as outer layer
 fn service(
-    host_cell: &RefCell<enet::Host<UdpSocket>>,
+    mut host: enet::Host<UdpSocket>,
     interrupt_cell: &RefCell<Receiver<bool>>,
     peer_id: enet::PeerID
-) -> Result<Option<ConnectionEvent>, &'static str> {
+) -> (enet::Host<UdpSocket>, Result<Option<ConnectionEvent>, &'static str>) {
     let mut interrupt_receiver = interrupt_cell.borrow_mut();
 
     if let Ok(Some(_)) = interrupt_receiver.try_next() {
-        initiate_disconnect(host_cell, peer_id);
-        return Ok(None);
+        let new_host = initiate_disconnect(host, peer_id);
+        return (new_host, Ok(None));
     }
 
-    let mut host = host_cell.borrow_mut();
-
+    let result =
     match host.service() {
         Err(_) => Err("host service error"),
 
@@ -63,6 +67,7 @@ fn service(
                 }
                 enet::Event::Disconnect { .. } => Ok(Some(ConnectionEvent::Disconnect)),
                 enet::Event::Receive { packet, .. } => {
+                    tracing::debug!("enet received packet of size, {:?}", packet.data().len());
                     if let Ok(message) = str::from_utf8(packet.data()) {
                         // println!("Received packet: {:?}", message);
 
@@ -97,14 +102,16 @@ fn service(
                 }
             }
         }
-    }
+    };
+
+    (host, result)
 }
 
-fn initiate_disconnect(host_cell: &RefCell<enet::Host<UdpSocket>>, peer_id: enet::PeerID) {
+fn initiate_disconnect(mut host: enet::Host<UdpSocket>, peer_id: enet::PeerID) -> enet::Host<UdpSocket> {
     tracing::info!("Disconnecting from Slippi...");
-    let mut host = host_cell.borrow_mut();
     let peer = host.peer_mut(peer_id);
     peer.disconnect(1337);
+    host
 }
 
 #[derive(Debug)]
@@ -118,87 +125,83 @@ pub enum ConnectionEvent {
 
 const MAX_PEERS: usize = 32;
 
-fn initiate_connection(host_cell: &RefCell<enet::Host<UdpSocket>>, addr: SocketAddr) -> enet::PeerID {
-    let mut host = host_cell.borrow_mut();
-    let peer = host.connect(addr, 3, 1337).unwrap();
-    peer.set_ping_interval(100);
-    peer.id()
-}
-
-async fn wait_for_connected(
-    host_cell: &RefCell<enet::Host<UdpSocket>>,
+fn wait_for_connected(
+    host: enet::Host<UdpSocket>,
     interrupt_cell: &RefCell<Receiver<bool>>,
     peer_id: enet::PeerID
-) {
-    // 120Hz
-    let mut i = interval(Duration::from_micros(8333));
-
-    future::poll_fn(|cx: &mut Context<'_>| {
-        let p = i.poll_tick(cx);
-        match p {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(_) => match service(host_cell, interrupt_cell, peer_id) {
-                Ok(Some(ConnectionEvent::Connect)) => Poll::Ready(()),
-                _ => {
-                    cx.waker().clone().wake();
-                    Poll::Pending
-                }
-            },
+) -> enet::Host<UdpSocket> {
+    let mut host_cycle = host;
+    loop {
+        let (new_host, result) = service(host_cycle, interrupt_cell, peer_id);
+        host_cycle = new_host;
+        match result {
+            Ok(Some(ConnectionEvent::Connect)) => return host_cycle,
+            _ => ()
         }
-    })
-    .await;
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 pub async fn data_stream(addr: SocketAddr, interrupt_receiver: Receiver<bool>) -> Pin<Box<SlippiDataStream>> {
     let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).unwrap();
 
-    let host_cell =
-        RefCell::new(
-            enet::Host::<UdpSocket>::new(
-                socket,
-                enet::HostSettings {
-                    peer_limit: MAX_PEERS,
-                    channel_limit: 3,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-        );
+    let mut host =
+        enet::Host::<UdpSocket>::new(
+            socket,
+            enet::HostSettings {
+                peer_limit: MAX_PEERS,
+                channel_limit: 3,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let interrupt_cell = RefCell::new(interrupt_receiver);
 
-    let peer_id = initiate_connection(&host_cell, addr);
-    wait_for_connected(&host_cell, &interrupt_cell, peer_id).await;
+    // Initiate connection
+    let peer = host.connect(addr, 3, 1337).unwrap();
+    peer.set_ping_interval(100);
+    let peer_id = peer.id();
+
+    host = wait_for_connected(host, &interrupt_cell, peer_id);
 
     // Poll Dolphin connection at 120Hz
     let mut i = interval(Duration::from_micros(8333));
     let mut dcd = false;
+
+    let (sender, receiver) = std::sync::mpsc::channel::<enet::Host<UdpSocket>>();
+    sender.send(host).unwrap();
 
     Box::pin(stream::poll_fn(move |cx: &mut Context<'_>| {
         if dcd {
             Poll::Ready(None)
         } else {
             let p = i.poll_tick(cx);
+
             match p {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => match full_service(&host_cell, &interrupt_cell, peer_id) {
-                    Result::Err(_e) => Poll::Ready(None),
-                    Result::Ok(events) => {
-                        if let Some(ConnectionEvent::Disconnect) = events.last() {
-                            dcd = true;
-                        }
+                Poll::Ready(_) => {
+                    let channel_host = receiver.try_recv().unwrap();
+                    match full_service(channel_host, &interrupt_cell, peer_id) {
+                        Result::Err(_e) => Poll::Ready(None),
+                        Result::Ok((new_host, events)) => {
+                            sender.send(new_host).unwrap();
+                            if let Some(ConnectionEvent::Disconnect) = events.last() {
+                                dcd = true;
+                            }
 
-                        cx.waker().clone().wake();
-                        let game_data: Vec<u8> = events
-                            .into_iter()
-                            .map(|event| match event {
-                                ConnectionEvent::Message { payload } => payload,
-                                _ => vec![],
-                            })
-                            .flatten()
-                            .collect();
-                        Poll::Ready(Some(game_data))
+                            cx.waker().clone().wake();
+                            let game_data: Vec<u8> = events
+                                .into_iter()
+                                .map(|event| match event {
+                                    ConnectionEvent::Message { payload } => payload,
+                                    _ => vec![],
+                                })
+                                .flatten()
+                                .collect();
+                            Poll::Ready(Some(game_data))
+                        }
                     }
-                },
+                }
             }
         }
     }))
