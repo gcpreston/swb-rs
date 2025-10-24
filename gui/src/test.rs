@@ -4,11 +4,37 @@ use std::{
     time::Duration,
 };
 
+use futures::StreamExt;
 use rusty_enet as enet;
 
 const MAX_PEERS: usize = 32;
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut handles = Vec::new();
+    handles.push(
+        runtime.spawn(async {
+            // do_enet().await;
+            let s = futures::stream::once(async { 42 });
+            let collected = s.collect::<Vec<i32>>().await;
+            println!("Stream result: {:?}", collected);
+        })
+    );
+
+    println!("spanwed and pushed");
+    for handle in handles {
+        println!("doing task {:?}", handle);
+        handle.await.expect("Panic in task");
+        println!("done");
+    }
+}
+
+async fn do_enet() {
     let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).unwrap();
 
     let mut host = enet::Host::<UdpSocket>::new(

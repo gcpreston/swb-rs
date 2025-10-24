@@ -1,1 +1,1 @@
-pub type SlippiDataStream = dyn futures::stream::Stream<Item = Vec<u8>>;
+pub type SlippiDataStream = dyn futures::stream::Stream<Item = Vec<u8>> + Send;

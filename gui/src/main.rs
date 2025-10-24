@@ -33,21 +33,23 @@ fn update(state: &mut State, message: Message) {
         Message::Broadcast => {
             *state = State::Broadcasting("".to_string(), 0);
 
-            // TODO: Welp still have to solve the multi-threading issue...
-            tokio::runtime::Builder::new_current_thread()
+            let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .unwrap()
-                .block_on(async {
-                    let result = connect_and_forward_packets_until_completion(
-                        &vec!["dolphin://127.0.0.1:51441".to_string()],
-                        "wss://spectatormode.tv/bridge_socket/websocket"
-                    ).await;
+                .unwrap();
 
-                    if let Err(err) = result {
-                        tracing::error!("{}", err);
-                    }
-                });
+            let _handle = rt.spawn(async {
+                println!("In the inside thread");
+                let result = connect_and_forward_packets_until_completion(
+                    &vec!["dolphin://127.0.0.1:51441".to_string()],
+                    "ws://localhost:4000/bridge_socket/websocket"
+                ).await;
+
+                if let Err(err) = result {
+                    println!("Error {:?}", err);
+                    tracing::error!("{}", err);
+                }
+            });
         },
         Message::Spectate(stream_id) => {
             *state = State::Spectating(stream_id);
@@ -100,6 +102,7 @@ fn view(state: &State) -> Element<'_, Message> {
 // Just copied from cli for the moment
 // ===================================
 
+use std::time::Duration;
 use std::{net::{AddrParseError, Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 use url::{Host, Url};
 use thiserror::Error;
