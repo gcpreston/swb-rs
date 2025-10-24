@@ -13,7 +13,7 @@ use crate::{config::{self, ConfigError}, spectate::playback_dolphin};
 type PayloadSizes = HashMap<u8, u16>;
 
 // TODO: New name since this is really a full dolphin mirror manager
-pub(crate) struct SlpFileWriter {
+pub struct SlpFileWriter {
     mirror_in_dolphin: bool,
     spectate_directory_path: PathBuf,
     current_file: Option<File>,
@@ -21,7 +21,7 @@ pub(crate) struct SlpFileWriter {
 }
 
 impl SlpFileWriter {
-    pub(crate) fn new(mirror_in_dolphin: bool) -> Result<SlpFileWriter, ConfigError> {
+    pub fn new(mirror_in_dolphin: bool) -> Result<SlpFileWriter, ConfigError> {
         if mirror_in_dolphin {
             playback_dolphin::launch_playback_dolphin()?;
         }
@@ -36,7 +36,7 @@ impl SlpFileWriter {
         })
     }
 
-    fn read_next_event<R: Read>(&mut self, mut data: R) -> std::io::Result<usize> {
+    pub fn read_next_event<R: Read>(&mut self, mut data: R) -> std::io::Result<usize> {
         // so payload sizes might be send
         match &self.payload_sizes {
             None => {
@@ -54,7 +54,7 @@ impl SlpFileWriter {
         }
     }
 
-    fn write_payload(&mut self, data: &[u8]) -> std::io::Result<usize> {
+    pub fn write_payload(&mut self, data: &[u8]) -> std::io::Result<usize> {
         if let Some(ref mut file) = self.current_file {
             file.write_all(data)?;
             Ok(data.len())
@@ -109,7 +109,6 @@ impl Write for SlpFileWriter {
 }
 
 #[repr(u8)]
-#[expect(unused)]
 pub enum Event {
     MessageSplitter = 0x10,
     Payloads = 0x35,
@@ -134,7 +133,7 @@ pub enum Event {
 /// Returns the number of bytes read, and a map of event codes to payload sizes.
 /// This map uses raw event codes as keys (as opposed to `Event` enum values)
 /// for forwards compatibility, to allow skipping unknown events.
-fn parse_payloads<R: Read>(mut r: R) -> std::io::Result<(usize, PayloadSizes)> {
+pub fn parse_payloads<R: Read>(mut r: R) -> std::io::Result<(usize, PayloadSizes)> {
     let code = r.read_u8()?;
     if code != Event::Payloads as u8 {
         return Err(Error::new(ErrorKind::Other, format!("expected event payloads, but got: {:#02x}", code)));

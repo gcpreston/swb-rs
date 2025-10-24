@@ -151,7 +151,7 @@ async fn wait_for_connected(
 
 pub async fn data_stream(addr: SocketAddr, interrupt_receiver: Receiver<bool>) -> Pin<Box<SlippiDataStream>> {
     let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).unwrap();
-    
+
     let host_cell =
         RefCell::new(
             enet::Host::<UdpSocket>::new(

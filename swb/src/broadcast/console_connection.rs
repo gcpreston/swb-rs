@@ -4,8 +4,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use futures::channel::mpsc::Receiver;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt}, 
-    net::TcpStream, 
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
     time::timeout
 };
 use async_stream::stream;

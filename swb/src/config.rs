@@ -7,7 +7,7 @@ use std::{
 
 // TODO: Change to thiserror definition as appropriate
 #[derive(Debug)]
-pub(crate) enum ConfigError {
+pub enum ConfigError {
     FileRead(PathBuf, io::Error),
     FileWrite(PathBuf, io::Error),
     JsonParse(PathBuf, serde_json::Error),

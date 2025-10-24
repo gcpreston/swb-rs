@@ -45,7 +45,7 @@ fn write_comm_spec(spec: CommSpec) {
     serde_json::to_writer(file, &spec).unwrap();
 }
 
-pub(crate) fn close_playback_dolphin() {
+pub fn close_playback_dolphin() {
     println!("close_playback_dolphin");
     // clean up temp comm spec
     // gracefully shutdown the process

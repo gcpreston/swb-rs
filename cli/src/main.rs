@@ -7,14 +7,8 @@ use tracing::Level;
 use self_update::cargo_crate_version;
 use url::{Host, Url};
 
-use crate::{common::SlippiDataStream, config::ConfigError};
-use crate::spectate::slp_file_writer::SlpFileWriter;
-
-mod broadcast;
-mod spectate;
-mod spectator_mode_client;
-mod common;
-mod config;
+use swb::{broadcast, common::SlippiDataStream, config::ConfigError, spectate, spectator_mode_client};
+use swb::spectate::slp_file_writer::SlpFileWriter;
 
 #[derive(Error, Debug)]
 pub(crate) enum SwbError {
