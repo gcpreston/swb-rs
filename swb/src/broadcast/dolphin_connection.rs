@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, pin::Pin, str, thread, time::Duration
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket}, pin::Pin, str, thread, time::Duration
 };
 
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -16,17 +16,21 @@ use tokio::time::interval;
 
 use crate::common::SlippiDataStream;
 
-fn full_service(
+struct DolphinHost {
     host: enet::Host<UdpSocket>,
-    interrupt_cell: &RefCell<Receiver<bool>>,
+    interrupt_receiver: Receiver<bool>
+}
+
+fn full_service(
+    host: DolphinHost,
     peer_id: enet::PeerID
-) -> Result<(enet::Host<UdpSocket>, Vec<ConnectionEvent>), &'static str> {
+) -> Result<(DolphinHost, Vec<ConnectionEvent>), &'static str> {
     let mut events: Vec<ConnectionEvent> = Vec::new();
 
     let mut host_cycle = host;
 
     loop {
-        let (new_host, result) = service(host_cycle, interrupt_cell, peer_id);
+        let (new_host, result) = service(host_cycle, peer_id);
         host_cycle = new_host;
         match result? {
             None => break,
@@ -39,19 +43,17 @@ fn full_service(
 
 // TODO: Probably makes more sense to return Result as outer layer
 fn service(
-    mut host: enet::Host<UdpSocket>,
-    interrupt_cell: &RefCell<Receiver<bool>>,
+    mut dolphin_host: DolphinHost,
     peer_id: enet::PeerID
-) -> (enet::Host<UdpSocket>, Result<Option<ConnectionEvent>, &'static str>) {
-    let mut interrupt_receiver = interrupt_cell.borrow_mut();
+) -> (DolphinHost, Result<Option<ConnectionEvent>, &'static str>) {
 
-    if let Ok(Some(_)) = interrupt_receiver.try_next() {
-        let new_host = initiate_disconnect(host, peer_id);
+    if let Ok(Some(_)) = dolphin_host.interrupt_receiver.try_next() {
+        let new_host = initiate_disconnect(dolphin_host, peer_id);
         return (new_host, Ok(None));
     }
 
     let result =
-    match host.service() {
+    match dolphin_host.host.service() {
         Err(_) => Err("host service error"),
 
         Ok(None) => Ok(None),
@@ -67,7 +69,6 @@ fn service(
                 }
                 enet::Event::Disconnect { .. } => Ok(Some(ConnectionEvent::Disconnect)),
                 enet::Event::Receive { packet, .. } => {
-                    tracing::debug!("enet received packet of size, {:?}", packet.data().len());
                     if let Ok(message) = str::from_utf8(packet.data()) {
                         // println!("Received packet: {:?}", message);
 
@@ -104,14 +105,14 @@ fn service(
         }
     };
 
-    (host, result)
+    (dolphin_host, result)
 }
 
-fn initiate_disconnect(mut host: enet::Host<UdpSocket>, peer_id: enet::PeerID) -> enet::Host<UdpSocket> {
+fn initiate_disconnect(mut dolphin_host: DolphinHost, peer_id: enet::PeerID) -> DolphinHost {
     tracing::info!("Disconnecting from Slippi...");
-    let peer = host.peer_mut(peer_id);
+    let peer = dolphin_host.host.peer_mut(peer_id);
     peer.disconnect(1337);
-    host
+    dolphin_host
 }
 
 #[derive(Debug)]
@@ -126,13 +127,12 @@ pub enum ConnectionEvent {
 const MAX_PEERS: usize = 32;
 
 fn wait_for_connected(
-    host: enet::Host<UdpSocket>,
-    interrupt_cell: &RefCell<Receiver<bool>>,
+    dolphin_host: DolphinHost,
     peer_id: enet::PeerID
-) -> enet::Host<UdpSocket> {
-    let mut host_cycle = host;
+) -> DolphinHost {
+    let mut host_cycle = dolphin_host;
     loop {
-        let (new_host, result) = service(host_cycle, interrupt_cell, peer_id);
+        let (new_host, result) = service(host_cycle, peer_id);
         host_cycle = new_host;
         match result {
             Ok(Some(ConnectionEvent::Connect)) => return host_cycle,
@@ -155,21 +155,21 @@ pub async fn data_stream(addr: SocketAddr, interrupt_receiver: Receiver<bool>) -
             },
         )
         .unwrap();
-    let interrupt_cell = RefCell::new(interrupt_receiver);
 
     // Initiate connection
     let peer = host.connect(addr, 3, 1337).unwrap();
     peer.set_ping_interval(100);
     let peer_id = peer.id();
 
-    host = wait_for_connected(host, &interrupt_cell, peer_id);
+    let mut dolphin_host = DolphinHost { host, interrupt_receiver };
+    dolphin_host = wait_for_connected(dolphin_host, peer_id);
 
     // Poll Dolphin connection at 120Hz
     let mut i = interval(Duration::from_micros(8333));
     let mut dcd = false;
 
-    let (sender, receiver) = std::sync::mpsc::channel::<enet::Host<UdpSocket>>();
-    sender.send(host).unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel::<DolphinHost>();
+    sender.send(dolphin_host).unwrap();
 
     Box::pin(stream::poll_fn(move |cx: &mut Context<'_>| {
         if dcd {
@@ -181,7 +181,7 @@ pub async fn data_stream(addr: SocketAddr, interrupt_receiver: Receiver<bool>) -
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(_) => {
                     let channel_host = receiver.try_recv().unwrap();
-                    match full_service(channel_host, &interrupt_cell, peer_id) {
+                    match full_service(channel_host, peer_id) {
                         Result::Err(_e) => Poll::Ready(None),
                         Result::Ok((new_host, events)) => {
                             sender.send(new_host).unwrap();
