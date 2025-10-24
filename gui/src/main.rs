@@ -1,6 +1,7 @@
 use iced::widget::{button, column, container, text, text_input};
 use iced::Alignment::Center;
 use iced::{Fill, Element};
+use tokio::runtime;
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -22,7 +23,7 @@ impl Default for State {
     }
 }
 
-pub fn main() -> iced::Result {
+fn main() -> iced::Result {
     iced::application("SpectatorMode Client", update, view)
         .window_size(iced::Size::new(300.0, 400.0))
         .run()
@@ -38,7 +39,7 @@ fn update(state: &mut State, message: Message) {
                 .build()
                 .unwrap();
 
-            let _handle = rt.spawn(async {
+            let handle = rt.spawn(async {
                 println!("In the inside thread");
                 let result = connect_and_forward_packets_until_completion(
                     &vec!["dolphin://127.0.0.1:51441".to_string()],
@@ -49,6 +50,10 @@ fn update(state: &mut State, message: Message) {
                     println!("Error {:?}", err);
                     tracing::error!("{}", err);
                 }
+            });
+
+            std::thread::spawn(move || {
+                rt.block_on(handle).unwrap();
             });
         },
         Message::Spectate(stream_id) => {
