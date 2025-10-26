@@ -1,14 +1,22 @@
+// For receiving external messages in multithreaded iced application:
+// https://stackoverflow.com/questions/74737759/how-to-send-messages-to-iced-application
+// Subscription::run: https://docs.rs/iced/latest/iced/struct.Subscription.html
+// - Really want a stream of connection events to subscribe to: connected, error, disconnected, etc, not the data
+
+use futures::SinkExt;
 use iced::widget::{button, column, container, text, text_input};
+use iced::futures::{channel::mpsc, Stream};
 use iced::Alignment::Center;
-use iced::{Fill, Element};
-use tokio::runtime;
+use iced::{stream, Element, Fill, Subscription};
+use swb::broadcast::dolphin_connection;
 
 #[derive(Debug, Clone)]
 enum Message {
     Broadcast,
     Spectate(u32),
     Stop,
-    ContentChanged(String)
+    ContentChanged(String),
+    ConnectionMessage(Event)
 }
 
 enum State {
@@ -26,6 +34,7 @@ impl Default for State {
 fn main() -> iced::Result {
     iced::application("SpectatorMode Client", update, view)
         .window_size(iced::Size::new(300.0, 400.0))
+        .subscription(subscription)
         .run()
 }
 
@@ -40,14 +49,12 @@ fn update(state: &mut State, message: Message) {
                 .unwrap();
 
             let handle = rt.spawn(async {
-                println!("In the inside thread");
                 let result = connect_and_forward_packets_until_completion(
                     &vec!["dolphin://127.0.0.1:51441".to_string()],
                     "ws://localhost:4000/bridge_socket/websocket"
                 ).await;
 
                 if let Err(err) = result {
-                    println!("Error {:?}", err);
                     tracing::error!("{}", err);
                 }
             });
@@ -64,6 +71,9 @@ fn update(state: &mut State, message: Message) {
         },
         Message::ContentChanged(new_content) => {
             *state = State::Standby(new_content);
+        },
+        Message::ConnectionMessage(event) => {
+            tracing::debug!("Got swb connection event {:?}", event);
         }
     }
 }
@@ -102,6 +112,86 @@ fn view(state: &State) -> Element<'_, Message> {
     .into()
 }
 
+#[derive(Debug, Clone)]
+pub enum Event {
+    Connected(mpsc::Sender<Event>),
+    Disconnected,
+    DisconnectRequest
+}
+
+fn subscription<P>(_state: &P) -> Subscription<Message> {
+    Subscription::run(connect_and_forward_data).map(Message::ConnectionMessage)
+}
+
+enum SwbConnState {
+    Disconnected,
+    Connected(Pin<Box<SlippiDataStream>>, mpsc::Receiver<Event>)
+}
+
+fn connect_and_forward_data() -> impl Stream<Item = Event> {
+    stream::channel(100, |mut output| async move {
+        let mut state = SwbConnState::Disconnected;
+
+        loop {
+            match &mut state {
+                SwbConnState::Disconnected => {
+                    let source_addr = SocketAddr::from_str("127.0.0.1:51441").unwrap();
+                    let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, false).await;
+
+                    let (sender, receiver) = mpsc::channel(100);
+
+                    let _ = output
+                        .send(Event::Connected(sender))
+                        .await;
+
+                    state = SwbConnState::Connected(slippi_conn, receiver);
+                },
+                SwbConnState::Connected(slippi_conn, receiver) => {
+                    /* Choose between
+                     * - Receiving connection event (disconnect successful)
+                     * - Receive event from parent (disconnect request)
+                     */
+
+                    // TODO: Going to want another layer of abstraction because we don't care about slippi data
+                    //   at all, and don't want to select it, just want to select connection events
+                    let mut fused_slippi_conn = slippi_conn.by_ref().fuse();
+
+                    futures::select! {
+                        // TODO: Can probably use select_next_some for a clean solution but still a bit confused by it
+                        received = fused_slippi_conn.next() => {
+                            match received {
+                                Some(data) => {
+                                    // TODO: Forward to SM
+                                    tracing::debug!("Got Slippi data of size {:?}", data.len());
+                                },
+
+                                None => {
+                                    output.send(Event::Disconnected).await;
+                                    state = SwbConnState::Disconnected;
+                                }
+                            }
+                        }
+
+                        message = receiver.select_next_some() => {
+                            match message {
+                                // These 2 aren't valid
+                                Event::Connected(sender) => todo!(),
+
+                                Event::Disconnected => todo!(),
+
+                                // This one matters
+                                Event::DisconnectRequest => {
+                                    // TODO: Arguments
+                                    dolphin_connection::initiate_disconnect(dolphin_host, peer_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
 
 // ===================================
 // Just copied from cli for the moment
