@@ -1,7 +1,12 @@
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+
+use futures::StreamExt;
 use iced::{stream, Element, Fill, Subscription};
 use iced::widget::{button, column, text, container};
 use iced::Alignment::Center;
-use iced::futures::Stream;
+use iced::futures::{future, Stream};
 use iced::futures::channel::mpsc;
 
 pub fn main() -> iced::Result {
@@ -98,7 +103,7 @@ impl SwbGui {
 
     fn subscription(&self) -> Subscription<Message> {
         if self.state == State::Broadcasting {
-            Subscription::run(stream_channel_test).map(Message::SwbLibMessage)
+            Subscription::run(broadcast).map(Message::SwbLibMessage)
         } else {
             Subscription::none()
         }
@@ -111,20 +116,62 @@ impl Default for SwbGui {
     }
 }
 
-fn stream_channel_test() -> impl Stream<Item = SwbLibEvent> {
+fn broadcast() -> impl Stream<Item = SwbLibEvent> {
     stream::channel(100, |mut output| async move {
-        use iced::futures::{StreamExt, SinkExt};
+        use iced::futures::SinkExt;
 
+        let source = "127.0.0.1:51441";
+        let dest = "ws://localhost:4000/bridge_socket/websocket";
+        let source_addr = SocketAddr::from_str(source).unwrap();
+
+        let (slippi_conn, slippi_interrupt) = swb::connect_to_slippi(source_addr, false).await;
+        let (sm_client, mut sm_connection_monitor, bridge_info) = swb::spectator_mode_client::initiate_connection(dest, 1).await.unwrap();
+
+        // This is the sender/receiver for the main thread to tell things to this sub-thread
+        // Specifically, to initiate a disconnect request
         let (sender, mut receiver) = mpsc::channel(100);
+        println!("Got slippi conn; sending sender {:?}", sender);
 
-        output.send(SwbLibEvent::BroadcastStarted(sender)).await.unwrap();
-        println!("Sent to output");
+        let _ = output
+            .send(SwbLibEvent::BroadcastStarted(sender))
+            .await
+            .unwrap();
+        println!("Sent sender");
 
-        loop {
+        // Set up the futures to await.
+        // Each individual future will attempt to gracefully disconnect the other.
+        let merged_stream = swb::broadcast::connection_manager::merge_slippi_streams(vec![slippi_conn], bridge_info.stream_ids).unwrap();
+        let dolphin_to_sm = swb::broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
+
+        let slippi_interrupt = Arc::new(Mutex::new(slippi_interrupt));
+        let slippi_interrupt_clone = Arc::clone(&slippi_interrupt);
+
+        let sm_connection_future = async {
+            let sm_client_result = sm_connection_monitor.wait_for_close().await;
+            tracing::debug!("SpectatorMode connection has finished, cleaning up...");
+            slippi_interrupt.lock().unwrap()();
+            sm_client_result
+        };
+
+        // Handle receiver messages in parallel.
+        tokio::spawn(async move {
             if let Some(event) = receiver.next().await {
-                println!("Received in channel test {:?}", event);
-                output.send(SwbLibEvent::BroadcastStopped).await.unwrap();
+                println!("Received event in broadcast channel: {:?}", event);
+
+                match event {
+                    SwbLibEvent::BroadcastStarted(_sender) => todo!(),
+                    SwbLibEvent::BroadcastStopped => todo!(),
+                    SwbLibEvent::StopRequest => slippi_interrupt_clone.lock().unwrap()(),
+                }
             }
-        }
+        });
+
+        // Run until both futures complete.
+        let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
+
+        println!("slippi to sm result: {:?}", slippi_to_sm_result);
+        println!("sm client result: {:?}", sm_client_result);
+
+        output.send(SwbLibEvent::BroadcastStopped).await.unwrap();
     })
 }
