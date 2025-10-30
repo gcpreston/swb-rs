@@ -8,7 +8,6 @@ use iced::widget::{button, column, container, text, text_input};
 use iced::futures::{channel::mpsc, Stream};
 use iced::Alignment::Center;
 use iced::{stream, Element, Fill, Subscription};
-use swb::broadcast::dolphin_connection;
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -19,9 +18,10 @@ enum Message {
     ConnectionMessage(Event)
 }
 
+#[derive(Debug)]
 enum State {
     Standby(String), // Spectate stream ID being inputted
-    Broadcasting(String, u32), // Bridge ID, Stream ID
+    Broadcasting(String, u32, Option<mpsc::Sender<Event>>), // Bridge ID, Stream ID, disconnect interrupt
     Spectating(u32) // Stream ID
 }
 
@@ -39,16 +39,12 @@ fn main() -> iced::Result {
 }
 
 fn update(state: &mut State, message: Message) {
+    println!("Update handling message {:?}", message);
+
     match message {
         Message::Broadcast => {
-            *state = State::Broadcasting("".to_string(), 0);
-
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-
-            let handle = rt.spawn(async {
+            /*
+            let _handle = tokio::spawn(async {
                 let result = connect_and_forward_packets_until_completion(
                     &vec!["dolphin://127.0.0.1:51441".to_string()],
                     "ws://localhost:4000/bridge_socket/websocket"
@@ -58,22 +54,32 @@ fn update(state: &mut State, message: Message) {
                     tracing::error!("{}", err);
                 }
             });
-
-            std::thread::spawn(move || {
-                rt.block_on(handle).unwrap();
-            });
+             */
+            println!("Pretend broadcasting");
+            *state = State::Broadcasting("".to_string(), 0, None);
         },
         Message::Spectate(stream_id) => {
             *state = State::Spectating(stream_id);
         },
         Message::Stop => {
-            *state = State::default();
+            println!("What is state {:?}", state);
+            if let State::Broadcasting(_bridge_id, _stream_id, maybe_sender) = state {
+                if let Some(sender) = maybe_sender {
+                    println!("Trying to send DC req");
+                    sender.try_send(Event::DisconnectRequest).unwrap();
+                }
+            }
+            // *state = State::Standby("".to_string());
         },
         Message::ContentChanged(new_content) => {
             *state = State::Standby(new_content);
         },
         Message::ConnectionMessage(event) => {
-            tracing::debug!("Got swb connection event {:?}", event);
+            println!("Got swb connection event {:?}", event);
+
+            if let Event::Connected(sender) = event {
+                *state = State::Broadcasting("".to_string(), 0, Some(sender));
+            }
         }
     }
 }
@@ -92,7 +98,7 @@ fn view(state: &State) -> Element<'_, Message> {
                 ),
                 text_input("Stream ID to spectate...", &content).on_input(Message::ContentChanged)
             ],
-            State::Broadcasting(_bridge_id, stream_id) => column![
+            State::Broadcasting(_bridge_id, stream_id, _maybe_interrupt) => column![
                 text(format!("Broadcasting with stream ID: {stream_id}"),).size(20),
                 button("Stop broadcast").on_press(Message::Stop)
             ],
@@ -116,20 +122,40 @@ fn view(state: &State) -> Element<'_, Message> {
 pub enum Event {
     Connected(mpsc::Sender<Event>),
     Disconnected,
-    DisconnectRequest
+    DisconnectRequest,
+    DCACK
 }
 
 fn subscription<P>(_state: &P) -> Subscription<Message> {
-    Subscription::run(connect_and_forward_data).map(Message::ConnectionMessage)
+    Subscription::run(stream_channel_test).map(|x| {
+        println!("got result from subscription {:?}", x);
+        Message::ConnectionMessage(x)
+    })
 }
 
 enum SwbConnState {
     Disconnected,
-    Connected(Pin<Box<SlippiDataStream>>, mpsc::Receiver<Event>)
+    Connected(Pin<Box<SlippiDataStream>>, mpsc::Receiver<Event>, Box<dyn FnMut() + Send>)
+}
+
+fn stream_channel_test() -> impl Stream<Item = Event> {
+    stream::channel(100, |mut output| async move {
+        let (sender, mut receiver) = mpsc::channel(100);
+
+        output.send(Event::Connected(sender)).await.unwrap();
+        println!("Sent to output");
+
+        loop {
+            if let Some(event) = receiver.next().await {
+                println!("Received in channel test {:?}", event);
+                output.send(Event::DCACK).await.unwrap();
+            }
+        }
+    })
 }
 
 fn connect_and_forward_data() -> impl Stream<Item = Event> {
-    stream::channel(100, |mut output| async move {
+    stream::channel(100, |mut output: mpsc::Sender<Event>| async move {
         let mut state = SwbConnState::Disconnected;
 
         loop {
@@ -138,15 +164,20 @@ fn connect_and_forward_data() -> impl Stream<Item = Event> {
                     let source_addr = SocketAddr::from_str("127.0.0.1:51441").unwrap();
                     let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, false).await;
 
+                    // This is the sender/receiver for the main thread to tell things to this sub-thread
+                    // Specifically, to initiate a disconnect request
                     let (sender, receiver) = mpsc::channel(100);
+                    println!("Got slippi conn; sending sender {:?}", sender);
 
                     let _ = output
                         .send(Event::Connected(sender))
-                        .await;
+                        .await
+                        .unwrap();
+                    println!("Sent sender");
 
-                    state = SwbConnState::Connected(slippi_conn, receiver);
+                    state = SwbConnState::Connected(slippi_conn, receiver, Box::new(slippi_interrupt));
                 },
-                SwbConnState::Connected(slippi_conn, receiver) => {
+                SwbConnState::Connected(slippi_conn, receiver, slippi_interrupt) => {
                     /* Choose between
                      * - Receiving connection event (disconnect successful)
                      * - Receive event from parent (disconnect request)
@@ -166,7 +197,7 @@ fn connect_and_forward_data() -> impl Stream<Item = Event> {
                                 },
 
                                 None => {
-                                    output.send(Event::Disconnected).await;
+                                    output.send(Event::Disconnected).await.unwrap();
                                     state = SwbConnState::Disconnected;
                                 }
                             }
@@ -175,14 +206,15 @@ fn connect_and_forward_data() -> impl Stream<Item = Event> {
                         message = receiver.select_next_some() => {
                             match message {
                                 // These 2 aren't valid
-                                Event::Connected(sender) => todo!(),
+                                Event::Connected(_sender) => todo!(),
 
                                 Event::Disconnected => todo!(),
 
+                                Event::DCACK => todo!(),
+
                                 // This one matters
                                 Event::DisconnectRequest => {
-                                    // TODO: Arguments
-                                    dolphin_connection::initiate_disconnect(dolphin_host, peer_id);
+                                    slippi_interrupt();
                                 }
                             }
                         }
@@ -197,7 +229,6 @@ fn connect_and_forward_data() -> impl Stream<Item = Event> {
 // Just copied from cli for the moment
 // ===================================
 
-use std::time::Duration;
 use std::{net::{AddrParseError, Ipv4Addr, SocketAddr}, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
 use url::{Host, Url};
 use thiserror::Error;
@@ -228,7 +259,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     let mut slippi_conns = vec![];
     let mut slippi_interrupts = vec![];
     let sources_owned = sources.clone();
-    let mut already_interrupted = false;
+    // let mut already_interrupted = false;
 
     for source_string in sources_owned {
         let string_to_parse =
