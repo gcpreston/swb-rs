@@ -70,30 +70,17 @@ jobs:
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.rust_target }}"
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
-            # Executable
-            mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
+            # CLI executable
+            mv "target/${{ matrix.rust_target }}/release/cli.exe" "$dirname/swb.exe"
 
-            # Broadcast and spectate scripts
-            cp "scripts/cmd/broadcast.cmd" "$dirname"
-            cp "scripts/cmd/spectate.cmd" "$dirname"
-            # Not sure how this works once it goes to Windows but can't hurt I suppose
-            chmod +x "$dirname/broadcast.cmd"
-            chmod +x "$dirname/spectate.cmd"
+            # GUI executable
+            mv "target/${{ matrix.rust_target }}/release/gui.exe" "$dirname/swb-gui.exe"
           else
-            # Executable
-            mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
+            # CLI executable
+            mv "target/${{ matrix.rust_target }}/release/cli" "$dirname/swb"
 
-            # Broadcast and spectate scripts
-            cp "scripts/bash/broadcast.sh" "$dirname"
-            cp "scripts/bash/spectate.sh" "$dirname"
-            chmod +x "$dirname/broadcast.sh"
-            chmod +x "$dirname/spectate.sh"
-          fi
-
-          # Rename to .command on Mac for double-click functionality
-          if [[ "${{ matrix.os }}" = "macos-latest" ]]; then
-            mv "$dirname/broadcast.sh" "$dirname/broadcast.command"
-            mv "$dirname/spectate.sh" "$dirname/spectate.command"
+            # GUI executable
+            mv "target/${{ matrix.rust_target }}/release/gui" "$dirname/swb-gui"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
