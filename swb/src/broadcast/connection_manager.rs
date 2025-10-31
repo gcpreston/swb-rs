@@ -69,7 +69,7 @@ fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>, st
 }
 
 /// Forward one or more streams to SpectatorMode as one bridge connection.
-pub async fn forward_streams(
+pub fn forward_streams(
     slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>,
     stream_ids: Vec<u32>,
     sm_client: SpectatorModeClient
