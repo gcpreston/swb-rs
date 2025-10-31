@@ -33,3 +33,6 @@ pub async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pi
 
     (conn, interruptor_to_return)
 }
+
+pub use spectator_mode_client::initiate_spectatormode_connection;
+pub use broadcast::connection_manager::forward_streams;

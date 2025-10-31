@@ -231,7 +231,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     })
     .unwrap();
 
-    let (sm_client, mut sm_connection_monitor, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await?;
+    let (sm_client, mut sm_connection_monitor, bridge_info) = swb::initiate_spectatormode_connection(dest, sources.len()).await?;
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
