@@ -66,7 +66,7 @@ pub enum Call {
     GameData(Bytes),
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfo {
     pub bridge_id: String,
     pub stream_ids: Vec<u32>,
