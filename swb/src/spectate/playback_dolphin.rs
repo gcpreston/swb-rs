@@ -1,5 +1,6 @@
-use std::{fs::File, path::PathBuf, process::Command};
+use std::{fs::File, path::PathBuf};
 
+use async_process::{Command, Child};
 use serde::{Deserialize, Serialize};
 use rand::{distr::Alphanumeric, Rng};
 
@@ -14,18 +15,18 @@ struct CommSpec {
     replay: Option<String>
 }
 
-pub(crate) fn launch_playback_dolphin() -> Result<(), ConfigError> {
+pub(crate) fn launch_playback_dolphin() -> Result<Child, ConfigError> {
     let spec = CommSpec { mode: "mirror".to_string(), commandId: "0".to_string(), replay: None };
     write_comm_spec(spec);
 
     let config = config::get_application_config();
 
-    Command::new(config.playback_dolphin_path()?)
+    let child = Command::new(config.playback_dolphin_path()?)
         .args(["-e", &config.iso_path().unwrap(), "-i", config.comm_spec_path().to_str().unwrap()])
         .spawn()
         .expect("failed to execute command");
 
-    Ok(())
+    Ok(child)
 }
 
 pub(crate) fn mirror_file(fp: PathBuf) {
@@ -43,10 +44,4 @@ fn write_comm_spec(spec: CommSpec) {
     let config = config::get_application_config();
     let file = File::create(config.comm_spec_path()).unwrap();
     serde_json::to_writer(file, &spec).unwrap();
-}
-
-pub fn close_playback_dolphin() {
-    println!("close_playback_dolphin");
-    // clean up temp comm spec
-    // gracefully shutdown the process
 }

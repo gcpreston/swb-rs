@@ -20,8 +20,6 @@ pub async fn data_stream(address: &str) -> Pin<Box<SlippiDataStream>> {
         for await result in stream {
             if let Ok(Message::Binary(bytes)) = result {
                 yield bytes.to_vec();
-            } else {
-                break;
             }
         }
     })

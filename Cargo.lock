@@ -4264,6 +4264,7 @@ name = "swb"
 version = "0.4.1"
 dependencies = [
  "async-channel 2.5.0",
+ "async-process",
  "async-stream",
  "async-trait",
  "base64 0.22.1",
@@ -4281,6 +4282,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.27.0",
+ "tokio-util",
  "tracing",
  "ubjson-rs",
  "url",

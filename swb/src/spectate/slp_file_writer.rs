@@ -2,9 +2,10 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufReader, Error, ErrorKind, Read, Write},
-    path::PathBuf,
+    path::PathBuf
 };
 
+use async_process::Child;
 use byteorder::{BE, ReadBytesExt};
 use chrono::{DateTime, Local};
 
@@ -21,19 +22,22 @@ pub struct SlpFileWriter {
 }
 
 impl SlpFileWriter {
-    pub fn new(mirror_in_dolphin: bool) -> Result<SlpFileWriter, ConfigError> {
-        if mirror_in_dolphin {
-            playback_dolphin::launch_playback_dolphin()?;
-        }
+    pub fn new(mirror_in_dolphin: bool) -> Result<(SlpFileWriter, Option<Child>), ConfigError> {
+        let dolphin_process =
+            if mirror_in_dolphin {
+                Some(playback_dolphin::launch_playback_dolphin()?)
+            } else {
+                None
+            };
 
         let config = config::get_application_config();
 
-        Ok(SlpFileWriter {
+        Ok((SlpFileWriter {
             mirror_in_dolphin: mirror_in_dolphin,
             spectate_directory_path: config.get_spectate_replay_directory_path()?,
             current_file: None,
             payload_sizes: None,
-        })
+        }, dolphin_process))
     }
 
     pub fn read_next_event<R: Read>(&mut self, mut data: R) -> std::io::Result<usize> {

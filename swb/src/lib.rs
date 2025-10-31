@@ -5,6 +5,7 @@ use std::pin::Pin;
 use futures::StreamExt;
 use futures::{channel::mpsc::channel};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 use crate::common::SlippiDataStream;
 
@@ -55,29 +56,58 @@ pub async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pi
     (conn, interruptor_to_return)
 }
 
-// TODO: Exit automatically when stream being watched is finished
 pub async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
-    // let (interrupt_sender, mut interrupt_receiver) = mpsc::channel::<bool>(100);
     let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
-    let mut playback_writer = spectate::slp_file_writer::SlpFileWriter::new(true)?;
+    let (mut playback_writer, dolphin_process) = spectate::slp_file_writer::SlpFileWriter::new(true)?;
 
-    // let mut already_interrupted = false;
-    // ctrlc::set_handler(move || {
-    //     if already_interrupted {
-    //         std::process::exit(2);
-    //     } else {
-    //         already_interrupted = true;
-    //         interrupt_sender.try_send(true).unwrap();
-    //     }
-    // })
-    // .unwrap();
+    let token = CancellationToken::new();
+    let cloned_token_1 = token.clone();
+    let cloned_token_2 = token.clone();
 
-    stream_conn.map(|data| {
-        // This is assuming that no events are split between stream items
-        playback_writer.write_all(&data).unwrap();
-    }).collect::<()>().await;
+    let writer_task = tokio::spawn(async move {
+        let writer_future =
+            stream_conn.map(|data| {
+                // This is assuming that no events are split between stream items
+                playback_writer.write_all(&data).unwrap();
+            }).collect::<()>();
 
-    spectate::playback_dolphin::close_playback_dolphin();
+        tokio::select! {
+            _ = cloned_token_1.cancelled() => {
+                println!("Cancelling writing task.");
+            }
+            _ = writer_future => {
+                println!("Stream exited; finished writing.");
+            }
+        }
+    });
+
+    let dolphin_task = tokio::spawn(async move {
+        let mut child = dolphin_process.expect("Playback Dolphin is not running.");
+
+        tokio::select! {
+            _ = cloned_token_2.cancelled() => {
+                println!("Cancelling dolphin task.");
+                child.kill().unwrap();
+            }
+
+            result = child.status() => {
+                println!("Dolphin closed with result {:?}", result);
+            }
+        }
+    });
+
+    let wrapped_writer_future = async {
+        writer_task.await.unwrap();
+        token.cancel();
+    };
+
+    let wrapped_dolphin_future = async {
+        dolphin_task.await.unwrap();
+        token.cancel();
+    };
+
+    tokio::join!(wrapped_writer_future, wrapped_dolphin_future);
+    println!("Both tasks are done");
 
     Ok(())
 }
