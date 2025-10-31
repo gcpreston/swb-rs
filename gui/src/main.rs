@@ -155,7 +155,7 @@ impl SwbGui {
             ],
             State::Spectating(stream_id) => column![
                 text(format!("Spectating stream ID {stream_id}")).size(20),
-                button("Stop spectating").on_press(Message::Stop)
+                text("Exit Playback Dolphin to stop spectating.")
             ]
         };
 
@@ -238,7 +238,13 @@ fn broadcast() -> impl Stream<Item = SwbLibEvent> {
 fn spectate(stream_id: u32) -> impl Stream<Item = SpectateEvent> {
     stream::channel(100, move |mut output| async move {
         output.send(SpectateEvent::Started(stream_id)).await.unwrap();
-        swb::mirror_to_dolphin(format!("ws://localhost:4000/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id).as_str()).await.unwrap();
+
+        let mirror_result = swb::mirror_to_dolphin(format!("ws://localhost:4000/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id).as_str()).await;
+
+        if let Err(error) = mirror_result {
+            println!("Dolphin mirror exited with error: {:?}", error);
+        }
+
         output.send(SpectateEvent::Stopped).await.unwrap();
     })
 }

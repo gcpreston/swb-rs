@@ -30,7 +30,10 @@ pub enum SwbError {
     UnknownSourceScheme(String),
 
     #[error("SpectatorMode connection error: {0}")]
-    SpectatorModeClientError(#[from] spectator_mode_client::SpectatorModeClientError)
+    SpectatorModeClientError(#[from] spectator_mode_client::SpectatorModeClientError),
+
+    #[error("WebSocket error: {0}")]
+    TungsteniteError(#[from] tokio_tungstenite::tungstenite::Error)
 }
 
 pub async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Box<SlippiDataStream>>, impl FnMut()) {
@@ -57,7 +60,7 @@ pub async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pi
 }
 
 pub async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
-    let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
+    let stream_conn = spectate::websocket_connection::data_stream(stream_url).await?;
     let (mut playback_writer, dolphin_process) = spectate::slp_file_writer::SlpFileWriter::new(true)?;
 
     let token = CancellationToken::new();
