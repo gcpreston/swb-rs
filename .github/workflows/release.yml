@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: build
+  build-cli:
+    name: build-cli
     # runs-on: ubuntu-latest
     runs-on: ${{ matrix.os }}
     strategy:
@@ -98,6 +98,69 @@ jobs:
           if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
           elif [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag_type=RELEASE_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "tag_type=INVALID_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: ${{ steps.tag_type.outputs.tag_type == 'PRE_RELEASE_TAG' }}
+          files: |
+            ${{ env.ASSET }}
+
+  build-gui:
+    name: build-gui
+    # runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - rust_target: aarch64-apple-darwin
+            os: macos-latest
+          - rust_target: x86_64-apple-darwin
+            os: macos-latest
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: ${{ matrix.rust_target }}
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Build the binary
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Package for macOS
+        shell: bash
+        run: |
+          RESOURCE_DIR="swb-gui/resources/packaging/macos"
+          APP_NAME="SpectatorMode Client.app"
+          ARCHIVE_NAME="SpectatorModeClient-${{ env.VERSION }}-${{ matrix.rust_target }}.tar.gz"
+
+          mv "target/${{ matrix.rust_target }}/release/swb-gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
+          cd "${RESOURCE_DIR}"
+          tar -czf "${ARCHIVE_NAME}" "./${APP_NAME}"
+          cd ../../../..
+          echo "ASSET=${RESOURCE_DIR}/${ARCHIVE_NAME}" >> $GITHUB_ENV
+
+      - name: Determine tag type
+        id: tag_type
+        shell: bash
+        run: |
+          if [[ ${{ github.ref }} =~ ^refs/tags/gui-v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
+          elif [[ ${{ github.ref }} =~ ^refs/tags/gui-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "tag_type=RELEASE_TAG" >> $GITHUB_OUTPUT
           else
             echo "tag_type=INVALID_TAG" >> $GITHUB_OUTPUT
