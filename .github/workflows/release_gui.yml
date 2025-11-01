@@ -45,8 +45,18 @@ jobs:
       - name: Package for macOS
         shell: bash
         run: |
+          RESOURCE_DIR="gui/resources/packaging/macos"
           APP_NAME="SpectatorMode Client.app"
           ARCHIVE_NAME="SpectatorMode Client ${{ env.VERSION }}.tar.gz"
+
+          echo "ls"
+          ls
+          echo "ls target"
+          ls "target/${{ matrix.rust_target }}"
+          echo "ls release"
+          ls "target/${{ matrix.rust_target }}/release"
+          echo "ls resource_dir"
+          ls "${RESOURCE_DIR}"
 
           mv "target/${{ matrix.rust_target }}/release/gui" "${RESOURCE_DIR}/${APP_NAME}/Content/MacOS/SpectatorMode Client"
           tar -czf "${ARCHIVE_NAME}" "${RESOURCE_DIR}/${APP_NAME}"
