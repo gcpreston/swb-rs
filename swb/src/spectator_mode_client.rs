@@ -66,7 +66,7 @@ pub enum Call {
     GameData(Bytes),
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct BridgeInfo {
     pub bridge_id: String,
     pub stream_ids: Vec<u32>,
@@ -138,7 +138,7 @@ impl Sink<Bytes> for SpectatorModeClient {
     }
 }
 
-pub async fn initiate_connection(
+pub async fn initiate_spectatormode_connection(
     address: &str,
     stream_count: usize,
 ) -> Result<(SpectatorModeClient, ConnectionMonitor, BridgeInfo), SpectatorModeClientError> {

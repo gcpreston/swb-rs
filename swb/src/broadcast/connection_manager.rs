@@ -12,7 +12,7 @@ use crate::{
 /// Merge the event streams from multiple Slippi connections into one.
 /// Requires a list of unique stream IDs to assign which is at least as long as
 /// the list of Slippi connections.
-pub fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<u8>)>, String> {
+fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>, stream_ids: Vec<u32>) -> Result<impl Stream<Item = (u32, Vec<u8>)>, String> {
     if stream_ids.len() < slippi_data_streams.len() {
         return Err(format!("Not enough stream IDs provided, got {:?} IDs for {:?} connections", stream_ids.len(), slippi_data_streams.len()));
     }
@@ -50,15 +50,15 @@ pub fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>
  * byte size would be required.
  */
 
- /// Send data from a stream of merged `SlippiDataStream`s to a 
+ /// Send data from a stream of merged `SlippiDataStream`s to a
  /// SpectatorMode connection.
  /// This function has the future completion properties of [`futures::stream::StreamExt::forward`],
  /// which means that successful exhaustion of the stream will flush and close
  /// the client sink, but a stream error will not do so. However, since a `SlippiDataStream`
  /// does not have an error case, *it is assumed the client sink is always
- /// closed when the returned future is completed. 
+ /// closed when the returned future is completed.
  /// Please refer to the documentation of [`futures::stream::StreamExt::forward`] for more details.
- pub fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), SpectatorModeClientError>> {
+ fn forward_slippi_data(stream: impl Stream<Item = (u32, Vec<u8>)>, sm_client: SpectatorModeClient) -> impl Future<Output = Result<(), SpectatorModeClientError>> {
     stream.filter_map(async |(k, v)| {
         if v.len() > 0 {
             Some(Ok(create_packet(k, v)))
@@ -67,6 +67,17 @@ pub fn merge_slippi_streams(slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>
         }
   }).forward(sm_client)
 }
+
+/// Forward one or more streams to SpectatorMode as one bridge connection.
+pub fn forward_streams(
+    slippi_data_streams: Vec<Pin<Box<SlippiDataStream>>>,
+    stream_ids: Vec<u32>,
+    sm_client: SpectatorModeClient
+) -> impl Future<Output = Result<(), SpectatorModeClientError>> {
+    let merged_stream = merge_slippi_streams(slippi_data_streams, stream_ids).unwrap();
+    forward_slippi_data(merged_stream, sm_client)
+}
+
 
 // https://stackoverflow.com/a/72631195
 fn create_header(data: &[u32; 2]) -> [u8; 8] {

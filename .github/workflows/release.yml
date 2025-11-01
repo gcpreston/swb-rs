@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: build
+  build-cli:
+    name: build-cli
     # runs-on: ubuntu-latest
     runs-on: ${{ matrix.os }}
     strategy:
@@ -65,35 +65,22 @@ jobs:
       - name: Build archive
         shell: bash
         run: |
-          binary_name="swb"
+          binary_name="swb-cli"
 
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.rust_target }}"
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
-            # Executable
-            mv "target/${{ matrix.rust_target }}/release/swb.exe" "$dirname"
+            # CLI executable
+            mv "target/${{ matrix.rust_target }}/release/swb-cli.exe" "$dirname/swb-cli.exe"
 
-            # Broadcast and spectate scripts
-            cp "scripts/cmd/broadcast.cmd" "$dirname"
-            cp "scripts/cmd/spectate.cmd" "$dirname"
-            # Not sure how this works once it goes to Windows but can't hurt I suppose
-            chmod +x "$dirname/broadcast.cmd"
-            chmod +x "$dirname/spectate.cmd"
+            # GUI executable
+            mv "target/${{ matrix.rust_target }}/release/swb-gui.exe" "$dirname/swb-gui.exe"
           else
-            # Executable
-            mv "target/${{ matrix.rust_target }}/release/swb" "$dirname"
+            # CLI executable
+            mv "target/${{ matrix.rust_target }}/release/swb-cli" "$dirname/swb-cli"
 
-            # Broadcast and spectate scripts
-            cp "scripts/bash/broadcast.sh" "$dirname"
-            cp "scripts/bash/spectate.sh" "$dirname"
-            chmod +x "$dirname/broadcast.sh"
-            chmod +x "$dirname/spectate.sh"
-          fi
-
-          # Rename to .command on Mac for double-click functionality
-          if [[ "${{ matrix.os }}" = "macos-latest" ]]; then
-            mv "$dirname/broadcast.sh" "$dirname/broadcast.command"
-            mv "$dirname/spectate.sh" "$dirname/spectate.command"
+            # GUI executable
+            mv "target/${{ matrix.rust_target }}/release/swb-gui" "$dirname/swb-gui"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -111,6 +98,69 @@ jobs:
           if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
           elif [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag_type=RELEASE_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "tag_type=INVALID_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: ${{ steps.tag_type.outputs.tag_type == 'PRE_RELEASE_TAG' }}
+          files: |
+            ${{ env.ASSET }}
+
+  build-gui:
+    name: build-gui
+    # runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - rust_target: aarch64-apple-darwin
+            os: macos-latest
+          - rust_target: x86_64-apple-darwin
+            os: macos-latest
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: ${{ matrix.rust_target }}
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Build the binary
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Package for macOS
+        shell: bash
+        run: |
+          RESOURCE_DIR="swb-gui/resources/packaging/macos"
+          APP_NAME="SpectatorMode Client.app"
+          ARCHIVE_NAME="swb-gui-${{ env.VERSION }}-${{ matrix.rust_target }}.tar.gz"
+
+          mv "target/${{ matrix.rust_target }}/release/swb-gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
+          cd "${RESOURCE_DIR}"
+          tar -czf "${ARCHIVE_NAME}" "./${APP_NAME}"
+          cd ../../../..
+          echo "ASSET=${RESOURCE_DIR}/${ARCHIVE_NAME}" >> $GITHUB_ENV
+
+      - name: Determine tag type
+        id: tag_type
+        shell: bash
+        run: |
+          if [[ ${{ github.ref }} =~ ^refs/tags/gui-v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "tag_type=PRE_RELEASE_TAG" >> $GITHUB_OUTPUT
+          elif [[ ${{ github.ref }} =~ ^refs/tags/gui-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "tag_type=RELEASE_TAG" >> $GITHUB_OUTPUT
           else
             echo "tag_type=INVALID_TAG" >> $GITHUB_OUTPUT

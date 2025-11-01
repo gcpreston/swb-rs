@@ -1,38 +1,12 @@
-use std::{io::Write, net::{AddrParseError, Ipv4Addr, SocketAddr}, num::ParseIntError, pin::Pin, str::FromStr, sync::{Arc, Mutex}};
+use std::{net::{Ipv4Addr, SocketAddr}, num::ParseIntError, str::FromStr, sync::{Arc, Mutex}};
 
 use clap::{Args, Parser, Subcommand};
-use futures::{channel::mpsc::channel, future, StreamExt};
-use thiserror::Error;
+use futures::future;
 use tracing::Level;
 use self_update::cargo_crate_version;
 use url::{Host, Url};
 
-use crate::{common::SlippiDataStream, config::ConfigError};
-use crate::spectate::slp_file_writer::SlpFileWriter;
-
-mod broadcast;
-mod spectate;
-mod spectator_mode_client;
-mod common;
-mod config;
-
-#[derive(Error, Debug)]
-pub(crate) enum SwbError {
-    #[error("Config error: {0}")]
-    ConfigError(#[from] ConfigError),
-
-    #[error("Error parsing socket address: {0}")]
-    SocketAddrParseError(#[from] AddrParseError),
-
-    #[error("URL parse error: {0}")]
-    URLParseError(#[from] url::ParseError),
-
-    #[error("Unknown source scheme: {0}")]
-    UnknownSourceScheme(String),
-
-    #[error("SpectatorMode connection error: {0}")]
-    SpectatorModeClientError(#[from] spectator_mode_client::SpectatorModeClientError)
-}
+use swb::SwbError;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about)]
@@ -102,7 +76,7 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
     let status = self_update::backends::github::Update::configure()
         .repo_owner("gcpreston")
         .repo_name("swb-rs")
-        .bin_name("swb")
+        .bin_name("swb-cli")
         .bin_path_in_archive("{{ bin }}-v{{ version }}-{{ target }}/{{ bin }}")
         .show_download_progress(true)
         .current_version(cargo_crate_version!())
@@ -144,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         connect_and_forward_packets_until_completion(&b.source, b.dest.as_str()).await
                     }
                     Commands::Spectate(s) => {
-                        mirror_to_dolphin(s.stream_url.as_str()).await
+                        swb::mirror_to_dolphin(s.stream_url.as_str()).await
                     }
                 };
 
@@ -154,33 +128,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
     println!("\nGoodbye!");
-
-    Ok(())
-}
-
-// TODO: Exit automatically when stream being watched is finished
-async fn mirror_to_dolphin(stream_url: &str) -> Result<(), SwbError> {
-    // let (interrupt_sender, mut interrupt_receiver) = mpsc::channel::<bool>(100);
-    let stream_conn = spectate::websocket_connection::data_stream(stream_url).await;
-    let mut playback_writer = SlpFileWriter::new(true)?;
-
-    // let mut already_interrupted = false;
-    // ctrlc::set_handler(move || {
-    //     if already_interrupted {
-    //         std::process::exit(2);
-    //     } else {
-    //         already_interrupted = true;
-    //         interrupt_sender.try_send(true).unwrap();
-    //     }
-    // })
-    // .unwrap();
-
-    stream_conn.map(|data| {
-        // This is assuming that no events are split between stream items
-        playback_writer.write_all(&data).unwrap();
-    }).collect::<()>().await;
-
-    spectate::playback_dolphin::close_playback_dolphin();
 
     Ok(())
 }
@@ -216,7 +163,7 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
                 other_scheme => Err(SwbError::UnknownSourceScheme(other_scheme.to_string()))
             }?;
 
-        let (slippi_conn, slippi_interrupt) = connect_to_slippi(source_addr, is_console).await;
+        let (slippi_conn, slippi_interrupt) = swb::connect_to_slippi(source_addr, is_console).await;
         slippi_conns.push(slippi_conn);
         slippi_interrupts.push(slippi_interrupt);
     }
@@ -237,12 +184,11 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     })
     .unwrap();
 
-    let (sm_client, mut sm_connection_monitor, bridge_info) = spectator_mode_client::initiate_connection(dest, sources.len()).await?;
+    let (sm_client, mut sm_connection_monitor, bridge_info) = swb::initiate_spectatormode_connection(dest, sources.len()).await?;
 
     // Set up the futures to await.
     // Each individual future will attempt to gracefully disconnect the other.
-    let merged_stream = broadcast::connection_manager::merge_slippi_streams(slippi_conns, bridge_info.stream_ids).unwrap();
-    let dolphin_to_sm = broadcast::connection_manager::forward_slippi_data(merged_stream, sm_client);
+    let dolphin_to_sm = swb::forward_streams(slippi_conns, bridge_info.stream_ids, sm_client);
 
     let sm_connection_future = async {
         let sm_client_result = sm_connection_monitor.wait_for_close().await;
@@ -260,27 +206,4 @@ async fn connect_and_forward_packets_until_completion(sources: &Vec<String>, des
     tracing::debug!("SpectatorMode connection finished successfully");
 
     Ok(())
-}
-
-async fn connect_to_slippi(source_addr: SocketAddr, is_console: bool) -> (Pin<Box<SlippiDataStream>>, impl FnMut()) {
-    let (sender, receiver) = channel::<bool>(100);
-    let mut other_sender = sender.clone();
-
-    tracing::info!("Connecting to Slippi {} at {}...", if is_console { "console" } else { "Dolphin" }, source_addr);
-    let conn  =
-        if is_console {
-            broadcast::console_connection::data_stream(source_addr, receiver).await
-        } else {
-            broadcast::dolphin_connection::data_stream(source_addr, receiver).await
-        };
-    tracing::info!("Connected to Slippi.");
-
-    let interruptor_to_return = move || {
-        match other_sender.try_send(true) {
-            Ok(_) => tracing::debug!("interrupt sent"),
-            Err(_) => tracing::debug!("sender already disconnected")
-        }
-    };
-
-    (conn, interruptor_to_return)
 }
