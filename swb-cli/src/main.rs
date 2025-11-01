@@ -76,7 +76,7 @@ fn update_if_needed() -> Result<self_update::Status, Box<dyn std::error::Error>>
     let status = self_update::backends::github::Update::configure()
         .repo_owner("gcpreston")
         .repo_name("swb-rs")
-        .bin_name("swb")
+        .bin_name("swb-cli")
         .bin_path_in_archive("{{ bin }}-v{{ version }}-{{ target }}/{{ bin }}")
         .show_download_progress(true)
         .current_version(cargo_crate_version!())

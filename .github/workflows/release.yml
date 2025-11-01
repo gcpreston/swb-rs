@@ -65,7 +65,7 @@ jobs:
       - name: Build archive
         shell: bash
         run: |
-          binary_name="swb"
+          binary_name="swb-cli"
 
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.rust_target }}"
           mkdir "$dirname"
@@ -146,7 +146,7 @@ jobs:
         run: |
           RESOURCE_DIR="swb-gui/resources/packaging/macos"
           APP_NAME="SpectatorMode Client.app"
-          ARCHIVE_NAME="SpectatorModeClient-${{ env.VERSION }}-${{ matrix.rust_target }}.tar.gz"
+          ARCHIVE_NAME="swb-gui-${{ env.VERSION }}-${{ matrix.rust_target }}.tar.gz"
 
           mv "target/${{ matrix.rust_target }}/release/swb-gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
           cd "${RESOURCE_DIR}"
