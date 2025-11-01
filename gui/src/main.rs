@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::{SinkExt, StreamExt};
 use iced::{stream, Element, Fill, Subscription, Task};
-use iced::widget::{button, column, text, container, text_input};
+use iced::widget::{button, column, row, text, container, text_input};
 use iced::Alignment::Center;
 use iced::futures::{future, Stream};
 use iced::futures::channel::mpsc;
@@ -16,7 +16,6 @@ const DEFAULT_HOST: &str = "wss://spectatormode.tv";
 
 pub fn main() -> iced::Result {
     let args: Vec<String> = env::args().collect();
-    println!("args: {:?}", args);
 
     let sm_host =
         if args.len() > 1 {
@@ -38,14 +37,14 @@ enum Message {
     Broadcast,
     Spectate(u32),
     Stop,
-    SwbLibMessage(SwbLibEvent),
+    BroadcastMessage(BroadcastEvent),
     SpectateMessage(SpectateEvent),
     SpectateTextFieldChanged(String)
 }
 
 /// Events sent from the swb lib, received by the client application.
 #[derive(Debug, Clone)]
-enum SwbLibEvent {
+enum BroadcastEvent {
     SlippiConnected,
     BroadcastStarted(BridgeInfo, mpsc::Sender<SwbLibSignal>),
     BroadcastStopped
@@ -86,7 +85,7 @@ impl SwbGui {
     }
 
     fn update(&mut self, message: Message) -> () {
-        println!("Processing update message {:?}", message);
+        tracing::debug!("Processing update message {:?}", message);
 
         match message {
             Message::Broadcast => {
@@ -107,30 +106,30 @@ impl SwbGui {
                 }
             }
 
-            Message::SwbLibMessage(event) => {
-                println!("Received swb event: {:?}", event);
+            Message::BroadcastMessage(event) => {
+                tracing::debug!("Received swb event: {:?}", event);
 
                 match event {
-                    SwbLibEvent::SlippiConnected => {
+                    BroadcastEvent::SlippiConnected => {
                         self.state = State::SpectatorModeConnecting;
                     }
 
-                    SwbLibEvent::BroadcastStarted(bridge_info, interrupt_sender) => {
+                    BroadcastEvent::BroadcastStarted(bridge_info, interrupt_sender) => {
                         self.state = State::Broadcasting(bridge_info, interrupt_sender);
                     }
 
-                    SwbLibEvent::BroadcastStopped => {
+                    BroadcastEvent::BroadcastStopped => {
                         self.state = State::Standby(String::new());
                     }
                 }
             }
 
             Message::SpectateMessage(event) => {
-                println!("Received spectate event: {:?}", event);
+                tracing::debug!("Received spectate event: {:?}", event);
 
                 match event {
                     SpectateEvent::Started(stream_id) => {
-                        println!("Spectate started, stream id {stream_id}");
+                        tracing::debug!("Spectate started, stream id {stream_id}");
                     }
 
                     SpectateEvent::Stopped => {
@@ -148,15 +147,18 @@ impl SwbGui {
     fn view(&self) -> Element<'_, Message> {
         let buttons = match &self.state {
             State::Standby(entered_stream_id) => column![
-                button("Broadcast").on_press(Message::Broadcast),
-                text_input("Stream ID to spectate...", entered_stream_id).on_input(Message::SpectateTextFieldChanged),
-                button("Spectate").on_press_maybe(
-                    if let Ok(stream_id) = entered_stream_id.parse() {
-                        Some(Message::Spectate(stream_id))
-                    } else {
-                        None
-                    }
-                )
+                button("Broadcast").on_press(Message::Broadcast).width(Fill),
+                text("or"),
+                row![
+                    text_input("Stream ID to spectate...", entered_stream_id).on_input(Message::SpectateTextFieldChanged),
+                    button("Spectate").on_press_maybe(
+                        if let Ok(stream_id) = entered_stream_id.parse() {
+                            Some(Message::Spectate(stream_id))
+                        } else {
+                            None
+                        }
+                    )
+                ].spacing(10)
             ],
             State::SlippiConnecting => column![
                 text(format!("Connecting to Slippi...")).size(20),
@@ -177,7 +179,7 @@ impl SwbGui {
         };
 
         container(buttons.align_x(Center).spacing(10))
-            .padding(10)
+            .padding(50)
             .center_x(Fill)
             .center_y(Fill)
             .into()
@@ -187,7 +189,7 @@ impl SwbGui {
         match self.state {
             State::Standby(_) => Subscription::none(),
             State::Spectating(stream_id) => Subscription::run_with_id(123, spectate(self.sm_host.clone(), stream_id)).map(Message::SpectateMessage),
-            _ => Subscription::run_with_id(124, broadcast(self.sm_host.clone())).map(Message::SwbLibMessage)
+            _ => Subscription::run_with_id(124, broadcast(self.sm_host.clone())).map(Message::BroadcastMessage)
         }
     }
 }
@@ -198,7 +200,7 @@ impl Default for SwbGui {
     }
 }
 
-fn broadcast(sm_host: String) -> impl Stream<Item = SwbLibEvent> {
+fn broadcast(sm_host: String) -> impl Stream<Item = BroadcastEvent> {
     stream::channel(100, |mut output| async move {
         use iced::futures::SinkExt;
 
@@ -207,13 +209,13 @@ fn broadcast(sm_host: String) -> impl Stream<Item = SwbLibEvent> {
         let source_addr = SocketAddr::from_str(source).unwrap();
 
         let (slippi_conn, slippi_interrupt) = swb::connect_to_slippi(source_addr, false).await;
-        output.send(SwbLibEvent::SlippiConnected).await.unwrap();
+        output.send(BroadcastEvent::SlippiConnected).await.unwrap();
         let (sm_client, mut sm_connection_monitor, bridge_info) = swb::initiate_spectatormode_connection(dest.as_str(), 1).await.unwrap();
 
         // This is the sender/receiver for the main thread to tell things to this sub-thread
         // Specifically, to initiate a disconnect request
         let (sender, mut receiver) = mpsc::channel(100);
-        output.send(SwbLibEvent::BroadcastStarted(bridge_info.clone(), sender)).await.unwrap();
+        output.send(BroadcastEvent::BroadcastStarted(bridge_info.clone(), sender)).await.unwrap();
 
         // Set up the futures to await.
         // Each individual future will attempt to gracefully disconnect the other.
@@ -232,7 +234,7 @@ fn broadcast(sm_host: String) -> impl Stream<Item = SwbLibEvent> {
         // Handle receiver messages in parallel.
         tokio::spawn(async move {
             if let Some(event) = receiver.next().await {
-                println!("Received event in broadcast channel: {:?}", event);
+                tracing::debug!("Received event in broadcast channel: {:?}", event);
 
                 match event {
                     SwbLibSignal::StopRequest => {
@@ -245,10 +247,10 @@ fn broadcast(sm_host: String) -> impl Stream<Item = SwbLibEvent> {
         // Run until both futures complete.
         let (slippi_to_sm_result, sm_client_result) = future::join(dolphin_to_sm, sm_connection_future).await;
 
-        println!("slippi to sm result: {:?}", slippi_to_sm_result);
-        println!("sm client result: {:?}", sm_client_result);
+        tracing::debug!("slippi to sm result: {:?}", slippi_to_sm_result);
+        tracing::debug!("sm client result: {:?}", sm_client_result);
 
-        output.send(SwbLibEvent::BroadcastStopped).await.unwrap();
+        output.send(BroadcastEvent::BroadcastStopped).await.unwrap();
     })
 }
 
@@ -259,7 +261,7 @@ fn spectate(sm_host: String, stream_id: u32) -> impl Stream<Item = SpectateEvent
         let mirror_result = swb::mirror_to_dolphin(format!("{sm_host}/websocket?stream_id={}&full_replay=true", stream_id).as_str()).await;
 
         if let Err(error) = mirror_result {
-            println!("Dolphin mirror exited with error: {:?}", error);
+            tracing::error!("Dolphin mirror exited with error: {:?}", error);
         }
 
         output.send(SpectateEvent::Stopped).await.unwrap();
