@@ -1,9 +1,10 @@
+use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use futures::{SinkExt, StreamExt};
-use iced::{stream, Element, Fill, Subscription};
+use iced::{stream, Element, Fill, Subscription, Task};
 use iced::widget::{button, column, text, container, text_input};
 use iced::Alignment::Center;
 use iced::futures::{future, Stream};
@@ -11,11 +12,25 @@ use iced::futures::channel::mpsc;
 
 use swb::spectator_mode_client::BridgeInfo;
 
+const DEFAULT_HOST: &str = "wss://spectatormode.tv";
+
 pub fn main() -> iced::Result {
+    let args: Vec<String> = env::args().collect();
+    println!("args: {:?}", args);
+
+    let sm_host =
+        if args.len() > 1 {
+            args[1].as_str()
+        } else {
+            DEFAULT_HOST
+        };
+
+    let initial_state = SwbGui::new(sm_host);
+
     iced::application("SpectatorMode Client", SwbGui::update, SwbGui::view)
         .window_size(iced::Size::new(400.0, 300.0))
         .subscription(SwbGui::subscription)
-        .run()
+        .run_with(|| { (initial_state, Task::none()) })
 }
 
 #[derive(Debug, Clone)]
@@ -58,13 +73,15 @@ enum State {
 }
 
 struct SwbGui {
-    state: State
+    state: State,
+    sm_host: String
 }
 
 impl SwbGui {
-    fn new() -> Self {
+    fn new(sm_host: &str) -> Self {
         Self {
             state: State::Standby(String::new()),
+            sm_host: sm_host.to_string()
         }
     }
 
@@ -169,29 +186,29 @@ impl SwbGui {
     fn subscription(&self) -> Subscription<Message> {
         match self.state {
             State::Standby(_) => Subscription::none(),
-            State::Spectating(stream_id) => Subscription::run_with_id(123, spectate(stream_id)).map(Message::SpectateMessage),
-            _ => Subscription::run(broadcast).map(Message::SwbLibMessage)
+            State::Spectating(stream_id) => Subscription::run_with_id(123, spectate(self.sm_host.clone(), stream_id)).map(Message::SpectateMessage),
+            _ => Subscription::run_with_id(124, broadcast(self.sm_host.clone())).map(Message::SwbLibMessage)
         }
     }
 }
 
 impl Default for SwbGui {
     fn default() -> Self {
-        SwbGui::new()
+        SwbGui::new(DEFAULT_HOST)
     }
 }
 
-fn broadcast() -> impl Stream<Item = SwbLibEvent> {
+fn broadcast(sm_host: String) -> impl Stream<Item = SwbLibEvent> {
     stream::channel(100, |mut output| async move {
         use iced::futures::SinkExt;
 
         let source = "127.0.0.1:51441";
-        let dest = "ws://localhost:4000/bridge_socket/websocket";
+        let dest = format!("{sm_host}/bridge_socket/websocket");
         let source_addr = SocketAddr::from_str(source).unwrap();
 
         let (slippi_conn, slippi_interrupt) = swb::connect_to_slippi(source_addr, false).await;
         output.send(SwbLibEvent::SlippiConnected).await.unwrap();
-        let (sm_client, mut sm_connection_monitor, bridge_info) = swb::initiate_spectatormode_connection(dest, 1).await.unwrap();
+        let (sm_client, mut sm_connection_monitor, bridge_info) = swb::initiate_spectatormode_connection(dest.as_str(), 1).await.unwrap();
 
         // This is the sender/receiver for the main thread to tell things to this sub-thread
         // Specifically, to initiate a disconnect request
@@ -235,11 +252,11 @@ fn broadcast() -> impl Stream<Item = SwbLibEvent> {
     })
 }
 
-fn spectate(stream_id: u32) -> impl Stream<Item = SpectateEvent> {
+fn spectate(sm_host: String, stream_id: u32) -> impl Stream<Item = SpectateEvent> {
     stream::channel(100, move |mut output| async move {
         output.send(SpectateEvent::Started(stream_id)).await.unwrap();
 
-        let mirror_result = swb::mirror_to_dolphin(format!("ws://localhost:4000/viewer_socket/websocket?stream_id={}&full_replay=true", stream_id).as_str()).await;
+        let mirror_result = swb::mirror_to_dolphin(format!("{sm_host}/websocket?stream_id={}&full_replay=true", stream_id).as_str()).await;
 
         if let Err(error) = mirror_result {
             println!("Dolphin mirror exited with error: {:?}", error);
