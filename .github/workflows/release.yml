@@ -71,16 +71,16 @@ jobs:
           mkdir "$dirname"
           if [[ "${{ matrix.os }}" = "windows-latest" ]]; then
             # CLI executable
-            mv "target/${{ matrix.rust_target }}/release/cli.exe" "$dirname/swb.exe"
+            mv "target/${{ matrix.rust_target }}/release/swb-cli.exe" "$dirname/swb-cli.exe"
 
             # GUI executable
-            mv "target/${{ matrix.rust_target }}/release/gui.exe" "$dirname/swb-gui.exe"
+            mv "target/${{ matrix.rust_target }}/release/swb-gui.exe" "$dirname/swb-gui.exe"
           else
             # CLI executable
-            mv "target/${{ matrix.rust_target }}/release/cli" "$dirname/swb"
+            mv "target/${{ matrix.rust_target }}/release/swb-cli" "$dirname/swb-cli"
 
             # GUI executable
-            mv "target/${{ matrix.rust_target }}/release/gui" "$dirname/swb-gui"
+            mv "target/${{ matrix.rust_target }}/release/swb-gui" "$dirname/swb-gui"
           fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then

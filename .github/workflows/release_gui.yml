@@ -45,11 +45,11 @@ jobs:
       - name: Package for macOS
         shell: bash
         run: |
-          RESOURCE_DIR="gui/resources/packaging/macos"
+          RESOURCE_DIR="swb-gui/resources/packaging/macos"
           APP_NAME="SpectatorMode Client.app"
           ARCHIVE_NAME="SpectatorModeClient-${{ env.VERSION }}-${{ matrix.rust_target }}.tar.gz"
 
-          mv "target/${{ matrix.rust_target }}/release/gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
+          mv "target/${{ matrix.rust_target }}/release/swb-gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
           cd "${RESOURCE_DIR}"
           tar -czf "${ARCHIVE_NAME}" "./${APP_NAME}"
           cd ../../../..

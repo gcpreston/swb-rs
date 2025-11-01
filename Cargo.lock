@@ -634,22 +634,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
-name = "cli"
-version = "0.4.2"
-dependencies = [
- "clap",
- "ctrlc",
- "futures",
- "self_update",
- "swb",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1745,20 +1729,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf0b36e6f090b7e1d8a4b49c0cb81c1f8376f72198c65dd3ad9ff3556b8b78c"
 dependencies = [
  "bitflags 2.10.0",
-]
-
-[[package]]
-name = "gui"
-version = "0.1.0"
-dependencies = [
- "futures",
- "iced",
- "rusty_enet",
- "swb",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -4285,6 +4255,36 @@ dependencies = [
  "tokio-util",
  "tracing",
  "ubjson-rs",
+ "url",
+]
+
+[[package]]
+name = "swb-cli"
+version = "0.4.2"
+dependencies = [
+ "clap",
+ "ctrlc",
+ "futures",
+ "self_update",
+ "swb",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "swb-gui"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "iced",
+ "rusty_enet",
+ "swb",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
  "url",
 ]
 
