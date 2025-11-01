@@ -47,11 +47,13 @@ jobs:
         run: |
           RESOURCE_DIR="gui/resources/packaging/macos"
           APP_NAME="SpectatorMode Client.app"
-          ARCHIVE_NAME="SpectatorMode Client ${{ env.VERSION }}.tar.gz"
+          ARCHIVE_NAME="SpectatorModeClient-${{ env.VERSION }}-${{ matrix.rust_target }}.tar.gz"
 
           mv "target/${{ matrix.rust_target }}/release/gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
-          tar -czf "${ARCHIVE_NAME}" "${RESOURCE_DIR}/${APP_NAME}"
-          echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
+          cd "${RESOURCE_DIR}"
+          tar -czf "${ARCHIVE_NAME}" "./${APP_NAME}"
+          cd ../../../..
+          echo "ASSET=${RESOURCE_DIR}/${ARCHIVE_NAME}" >> $GITHUB_ENV
 
       - name: Determine tag type
         id: tag_type
