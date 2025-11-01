@@ -49,16 +49,7 @@ jobs:
           APP_NAME="SpectatorMode Client.app"
           ARCHIVE_NAME="SpectatorMode Client ${{ env.VERSION }}.tar.gz"
 
-          echo "ls"
-          ls
-          echo "ls target"
-          ls "target/${{ matrix.rust_target }}"
-          echo "ls release"
-          ls "target/${{ matrix.rust_target }}/release"
-          echo "ls resource_dir"
-          ls "${RESOURCE_DIR}"
-
-          mv "target/${{ matrix.rust_target }}/release/gui" "${RESOURCE_DIR}/${APP_NAME}/Content/MacOS/SpectatorMode Client"
+          mv "target/${{ matrix.rust_target }}/release/gui" "${RESOURCE_DIR}/${APP_NAME}/Contents/MacOS/SpectatorMode Client"
           tar -czf "${ARCHIVE_NAME}" "${RESOURCE_DIR}/${APP_NAME}"
           echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
