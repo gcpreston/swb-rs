@@ -2,6 +2,7 @@
 name = "swb-gui"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 swb = { path = "../swb" }
@@ -12,3 +13,7 @@ thiserror = "2.0.17"
 futures = "0.3.31"
 tokio = { version = "1.45.0", features = ["full", "time"] }
 rusty_enet = "0.4.0"
+winresource = "0.1.25"
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
